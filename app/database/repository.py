@@ -342,6 +342,14 @@ class Repository:
             )
             return (result.scalar() or 0) > 0
 
+    async def get_job_by_hash(self, dedup_hash: str) -> Job | None:
+        """Obtiene una oferta existente por su hash de deduplicación."""
+        async with self._db.session() as session:
+            result = await session.execute(
+                select(Job).where(Job.dedup_hash == dedup_hash)
+            )
+            return result.scalar_one_or_none()
+
     async def job_exists_by_source_and_external_id(
         self, source_id: int, external_id: str
     ) -> Job | None:
@@ -449,6 +457,25 @@ class Repository:
                 .values(notified=True, notification_message_id=message_id)
             )
             await session.commit()
+
+    async def reset_all_notifications(self) -> int:
+        """Resetea el estado de notificación de todas las ofertas para reenvío completo."""
+        async with self._db.session() as session:
+            result = await session.execute(
+                update(Job).values(notified=False, notification_message_id=None)
+            )
+            await session.commit()
+            return result.rowcount
+
+    async def clear_all_jobs(self) -> int:
+        """Elimina todas las ofertas y registros asociados para un reseteo total."""
+        async with self._db.session() as session:
+            await session.execute(delete(JobObservation))
+            await session.execute(delete(SavedJob))
+            await session.execute(delete(Application))
+            result = await session.execute(delete(Job))
+            await session.commit()
+            return result.rowcount
 
     async def get_unnotified_jobs(self) -> Sequence[Job]:
         """Obtiene ofertas que aún no han sido notificadas."""

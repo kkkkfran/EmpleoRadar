@@ -48,3 +48,4 @@ def test_parse_inacap_jsonld_item() -> None:
     assert payload.external_id == "12345"
     assert payload.published_at == datetime(2026, 10, 16, 0, 0)
     assert payload.dedup_hash is not None
+

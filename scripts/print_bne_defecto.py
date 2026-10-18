@@ -9,3 +9,4 @@ with urllib.request.urlopen(req, timeout=10) as resp:
 idx = js.find('_criteriosDefecto')
 if idx != -1:
     print(js[idx:idx+800])
+

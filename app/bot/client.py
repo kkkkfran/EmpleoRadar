@@ -197,10 +197,11 @@ class EmpleoRadarBot(commands.Bot):
         job: JobPayload,
         match_result: JobMatchResult,
         job_id: int,
-    ) -> None:
+    ) -> bool:
         """Envía una notificación al canal de Discord correspondiente usando Discord Components V2.
 
         NUNCA envía a mensaje privado (DM), respetando la directiva explícita del usuario.
+        Retorna True si se despachó el mensaje a Discord, False en caso contrario.
         """
         try:
             channel_id = self.get_destination_channel_id(job)
@@ -208,7 +209,7 @@ class EmpleoRadarBot(commands.Bot):
                 logger.debug(
                     "La vacante #%d no coincide con los canales de destino configurados.", job_id
                 )
-                return
+                return False
 
             target_channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
             if not target_channel or not isinstance(
@@ -219,7 +220,7 @@ class EmpleoRadarBot(commands.Bot):
                     channel_id,
                     job_id,
                 )
-                return
+                return False
 
             try:
                 # Usar Discord Components V2 (LayoutView con Separator)
@@ -257,8 +258,10 @@ class EmpleoRadarBot(commands.Bot):
                 job_id,
                 job.title,
             )
+            return True
         except Exception as e:
             logger.error("Error al publicar notificación para oferta #%d: %s", job_id, e)
+            return False
 
     async def on_tree_error(
         self,

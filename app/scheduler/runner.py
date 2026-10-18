@@ -1,4 +1,4 @@
-"""Planificador periódico de sondeo de ofertas con APScheduler."""
+"""Planificador periódico continuo y despacho unificado de ofertas laborales."""
 
 from __future__ import annotations
 
@@ -21,12 +21,12 @@ from app.sources.registry import SourceRegistry
 
 logger = logging.getLogger(__name__)
 
-# Callback type for sending Discord notifications
-NotificationCallback = Callable[[JobPayload, JobMatchResult, int], Coroutine[Any, Any, None]]
+# Callback para enviar notificaciones a Discord (retorna True si se envió mensaje)
+NotificationCallback = Callable[[JobPayload, JobMatchResult, int], Coroutine[Any, Any, bool]]
 
 
 class JobSchedulerRunner:
-    """Ejecutor de tareas en segundo plano para sondeo periódico de vacantes laborales."""
+    """Ejecutor de tareas en segundo plano para sondeo periódico continuo y despacho ordenado."""
 
     def __init__(
         self,
@@ -50,7 +50,7 @@ class JobSchedulerRunner:
         self._polling_lock = asyncio.Lock()
 
     async def start(self) -> None:
-        """Inicia el planificador y la sesión HTTP."""
+        """Inicia el planificador daemon y la sesión HTTP."""
         if self._is_running:
             return
 
@@ -60,22 +60,20 @@ class JobSchedulerRunner:
         # Sincronizar fuentes con la base de datos
         await self.source_registry.sync_with_database()
 
-        # Programar sondeo de fuentes activas
-        active_sources = self.source_registry.get_active_sources()
-        for src in active_sources:
-            interval = max(5, src.poll_interval_minutes or self.poll_interval_minutes)
-            self._scheduler.add_job(
-                self.poll_source,
-                "interval",
-                minutes=interval,
-                args=[src],
-                id=f"poll_{src.name}",
-                replace_existing=True,
-            )
-            logger.info("Programado sondeo para [%s] cada %d minutos.", src.name, interval)
-
+        # Programar sondeo periódico continuo unificado
+        interval = max(2, self.poll_interval_minutes)
+        self._scheduler.add_job(
+            self.scan_and_dispatch_cycle,
+            "interval",
+            minutes=interval,
+            id="unified_job_scanner",
+            replace_existing=True,
+        )
         self._scheduler.start()
-        logger.info("Planificador de sondeo iniciado correctamente.")
+        logger.info(
+            "Planificador de sondeo continuo iniciado (frecuencia: cada %d minutos).",
+            interval,
+        )
 
     async def stop(self) -> None:
         """Detiene el planificador y cierra conexiones."""
@@ -89,177 +87,208 @@ class JobSchedulerRunner:
         self._is_running = False
         logger.info("Planificador de sondeo detenido.")
 
-    async def run_all_sources_now(self, since_date: datetime | None = None) -> None:
-        """Ejecuta un ciclo de sondeo inmediato sobre todas las fuentes activas sin duplicar concurrencia."""
-        if self._polling_lock.locked():
-            logger.warning(
-                "Ciclo de sondeo actualmente en progreso. Omitiendo ejecución duplicada."
-            )
-            return
-
-        async with self._polling_lock:
-            cutoff = since_date or datetime(2026, 10, 13)
-            sources = self.source_registry.get_active_sources()
-            for src in sources:
-                try:
-                    await self._poll_source_internal(src, min_date=cutoff)
-                except Exception as e:
-                    logger.error("Error durante sondeo de fuente %s: %s", src.name, e)
+    @staticmethod
+    def get_job_datetime(job: JobPayload) -> datetime:
+        """Obtiene la fecha de ordenamiento cronológico de forma homogénea (naive)."""
+        dt = job.published_at or job.detected_at or datetime.now()
+        if dt.tzinfo is not None:
+            dt = dt.astimezone().replace(tzinfo=None)
+        return dt
 
     async def poll_source(
         self,
         source: BaseJobSource,
         min_date: datetime | None = None,
     ) -> None:
-        """Ejecuta el ciclo de extracción para una fuente protegiendo contra concurrencia."""
-        async with self._polling_lock:
-            await self._poll_source_internal(source, min_date=min_date)
+        """Ejecuta el ciclo de extracción para una fuente específica."""
+        await self._dispatch_jobs_for_sources([source], since_date=min_date)
 
-    async def _poll_source_internal(
+    async def run_all_sources_now(self, since_date: datetime | None = None) -> int:
+        """Alias para ejecutar un ciclo de escaneo y despacho inmediato."""
+        return await self.scan_and_dispatch_cycle(since_date=since_date)
+
+    async def scan_and_dispatch_cycle(self, since_date: datetime | None = None) -> int:
+        """Ejecuta el ciclo unificado sobre todas las fuentes activas."""
+        sources = self.source_registry.get_active_sources()
+        return await self._dispatch_jobs_for_sources(sources, since_date=since_date)
+
+    async def _dispatch_jobs_for_sources(
         self,
-        source: BaseJobSource,
-        min_date: datetime | None = None,
-    ) -> None:
-        """Lógica interna de extracción, deduplicación, ordenamiento y notificación."""
+        sources: list[BaseJobSource],
+        since_date: datetime | None = None,
+    ) -> int:
+        """Ciclo unificado de recolección, deduplicación, ordenamiento cronológico y despacho.
+
+        1. Consulta las fuentes suministradas (todas o específicas).
+        2. Unifica las ofertas en una sola colección independiente de la fuente.
+        3. Deduplica en memoria.
+        4. Ordena ASCENDENTEMENTE (de la más antigua a la más nueva) para que en Discord
+           la más reciente quede abajo del todo.
+        5. Inserta y despacha directamente a Discord con delay anti rate-limit.
+        """
         if not self._session or self._session.closed:
-            return
+            return 0
 
-        cutoff_date = min_date or datetime(2026, 10, 13)
+        if self._polling_lock.locked():
+            logger.warning(
+                "Ciclo de escaneo actualmente en ejecución. Omitiendo invocación concurrente."
+            )
+            return 0
 
-        # Verificar si el usuario pausó las notificaciones
-        db_owner = await self.repo.get_owner(self.owner_id)
-        if db_owner:
-            db_prefs = await self.repo.get_or_create_preferences(db_owner.id)
-            if db_prefs.is_paused:
-                logger.info(
-                    "Sondeo omitido temporalmente: notificaciones pausadas por el usuario."
-                )
-                return
-            criteria = criteria_from_db_preferences(db_prefs)
-        else:
-            criteria = JobMatchCriteria()
+        async with self._polling_lock:
+            cutoff_date = since_date or datetime(2026, 10, 13)
 
-        async with self.semaphore:
-            start_time = time.time()
-            jobs_found = 0
-            duplicates_found = 0
-            error_msg: str | None = None
-            is_healthy = True
+            # Verificar preferencias de usuario
+            db_owner = await self.repo.get_owner(self.owner_id)
+            if db_owner:
+                db_prefs = await self.repo.get_or_create_preferences(db_owner.id)
+                if db_prefs.is_paused:
+                    logger.info("Sondeo omitido temporalmente: notificaciones pausadas por el usuario.")
+                    return 0
+                criteria = criteria_from_db_preferences(db_prefs)
+            else:
+                criteria = JobMatchCriteria()
 
-            try:
-                raw_jobs = await source.fetch_jobs(self._session, criteria)
-                jobs_found = len(raw_jobs)
+            logger.info("Iniciando ciclo unificado de recolección en %d fuentes...", len(sources))
 
-                # Filtrar por fecha mínima (desde 13 de octubre en adelante)
-                valid_jobs: list[JobPayload] = []
-                for job_payload in raw_jobs:
-                    pub_date = job_payload.published_at or datetime.now()
-                    if pub_date >= cutoff_date:
-                        valid_jobs.append(job_payload)
+            all_raw_jobs: list[JobPayload] = []
 
-                # ORDENAMIENTO: Del más nuevo al más antiguo (las más recientes primero)
-                valid_jobs.sort(key=lambda j: j.published_at or datetime.min, reverse=True)
+            # 1. Recolección desde cada fuente activa
+            for source in sources:
+                async with self.semaphore:
+                    start_t = time.time()
+                    try:
+                        jobs = await source.fetch_jobs(self._session, criteria)
+                        all_raw_jobs.extend(jobs)
+                        elapsed_ms = int((time.time() - start_t) * 1000)
+                        db_source = await self.repo.get_or_create_source(source.name)
+                        await self.repo.update_source_health(
+                            source_id=db_source.id,
+                            is_healthy=True,
+                            response_time_ms=elapsed_ms,
+                            jobs_found=len(jobs),
+                        )
+                        logger.info("[%s] recolectó %d ofertas.", source.name, len(jobs))
+                    except Exception as e:
+                        elapsed_ms = int((time.time() - start_t) * 1000)
+                        logger.error("Error consultando [%s]: %s", source.name, e)
+                        db_source = await self.repo.get_or_create_source(source.name)
+                        await self.repo.update_source_health(
+                            source_id=db_source.id,
+                            is_healthy=False,
+                            response_time_ms=elapsed_ms,
+                            error_message=str(e),
+                        )
 
-                seen_in_batch: set[str] = set()
-
-                for job_payload in valid_jobs:
-                    # Comprobar huella de deduplicación
-                    if not job_payload.dedup_hash:
-                        from app.jobs.deduplication import compute_job_fingerprint
-
-                        compute_job_fingerprint(job_payload)
-
-                    # Deduplicación en el mismo lote
-                    if job_payload.dedup_hash in seen_in_batch:
-                        duplicates_found += 1
-                        continue
-                    seen_in_batch.add(job_payload.dedup_hash)
-
-                    db_source = await self.repo.get_or_create_source(source.name)
-                    existing_job = await self.repo.job_exists_by_source_and_external_id(
-                        db_source.id, str(job_payload.external_id)
-                    )
-
-                    # Si no coincide por ID externo, verificar por hash de contenido
-                    if not existing_job:
-                        hash_exists = await self.repo.job_exists_by_hash(job_payload.dedup_hash)
-                        if hash_exists:
-                            duplicates_found += 1
-                            continue
-
-                    if existing_job:
-                        # Si ya existe en base de datos pero aún no fue notificada
-                        if not existing_job.notified and self.notification_callback:
-                            match_result = evaluate_job_match(job_payload, criteria)
-                            try:
-                                await self.notification_callback(
-                                    job_payload, match_result, existing_job.id
-                                )
-                                await self.repo.mark_job_notified(existing_job.id)
-                                await asyncio.sleep(0.4)
-                            except Exception as notif_err:
-                                logger.error("Error al despachar notificación: %s", notif_err)
-                        duplicates_found += 1
-                        continue
-
-                    # Guardar la nueva vacante
-                    saved_job = await self.repo.add_job(
-                        source_id=db_source.id,
-                        external_id=job_payload.external_id,
-                        title=job_payload.title,
-                        company=job_payload.company,
-                        description=job_payload.description,
-                        location=job_payload.location_raw,
-                        region=job_payload.region,
-                        comuna=job_payload.comuna,
-                        modality=job_payload.modality.value,
-                        contract_type=job_payload.contract_type.value,
-                        schedule=job_payload.schedule.value,
-                        salary_min=job_payload.salary_min,
-                        salary_max=job_payload.salary_max,
-                        salary_type=job_payload.salary_type,
-                        requirements=job_payload.requirements,
-                        experience_required=job_payload.experience_required,
-                        education_required=job_payload.education_required,
-                        url=job_payload.url,
-                        published_at=job_payload.published_at,
-                        is_internship=job_payload.is_internship,
-                        dedup_hash=job_payload.dedup_hash,
-                        raw_data=str(job_payload.raw_data or {}),
-                    )
-
-                    await self.repo.increment_source_jobs_count(db_source.id, 1)
-
-                    # Evaluar compatibilidad con el perfil
-                    match_result = evaluate_job_match(job_payload, criteria)
-
-                    # Despachar notificación
-                    if self.notification_callback:
-                        try:
-                            await self.notification_callback(
-                                job_payload, match_result, saved_job.id
-                            )
-                            await self.repo.mark_job_notified(saved_job.id)
-                            await asyncio.sleep(0.4)
-                        except Exception as notif_err:
-                            logger.error(
-                                "Error al despachar notificación a Discord: %s", notif_err
-                            )
-
-            except Exception as e:
-                is_healthy = False
-                error_msg = str(e)
-                logger.error("Fallo durante sondeo de [%s]: %s", source.name, e)
-
-            # Registrar salud de la fuente en base de datos
-            elapsed_ms = int((time.time() - start_time) * 1000)
-            db_source = await self.repo.get_or_create_source(source.name)
-            await self.repo.update_source_health(
-                source_id=db_source.id,
-                is_healthy=is_healthy,
-                response_time_ms=elapsed_ms,
-                jobs_found=jobs_found,
-                duplicates_found=duplicates_found,
-                error_message=error_msg,
+            logger.info(
+                "Total recolectado entre fuentes: %d ofertas.", len(all_raw_jobs)
             )
 
+            # 2. Filtrar por fecha mínima (por defecto 13 de octubre)
+            valid_jobs: list[JobPayload] = []
+            for j in all_raw_jobs:
+                if self.get_job_datetime(j) >= cutoff_date:
+                    valid_jobs.append(j)
+
+            # 3. Deduplicación en memoria de la colección unificada
+            unique_jobs: list[JobPayload] = []
+            seen_hashes: set[str] = set()
+            for j in valid_jobs:
+                if not j.dedup_hash:
+                    from app.jobs.deduplication import compute_job_fingerprint
+
+                    compute_job_fingerprint(j)
+
+                if j.dedup_hash in seen_hashes:
+                    continue
+                seen_hashes.add(j.dedup_hash)
+                unique_jobs.append(j)
+
+            # 4. ORDENAMIENTO GLOBAL ASCENDENTE (de la más antigua a la más nueva)
+            # La fuente es irrelevante; la prioridad absoluta es la fecha real
+            unique_jobs.sort(key=self.get_job_datetime, reverse=False)
+
+            logger.info(
+                "Ofertas únicas filtradas a despachar en orden cronológico ascendente: %d",
+                len(unique_jobs),
+            )
+
+            # 5. Inserción y despacho directo a Discord
+            dispatched_count = 0
+            for job_payload in unique_jobs:
+                db_source = await self.repo.get_or_create_source(job_payload.source_name)
+                existing_job = await self.repo.job_exists_by_source_and_external_id(
+                    db_source.id, str(job_payload.external_id)
+                )
+
+                if not existing_job:
+                    existing_job = await self.repo.get_job_by_hash(job_payload.dedup_hash)
+
+                if existing_job:
+                    # Si ya existe en base de datos pero estaba pendiente de notificar
+                    if not existing_job.notified and self.notification_callback:
+                        match_result = evaluate_job_match(job_payload, criteria)
+                        try:
+                            sent = await self.notification_callback(
+                                job_payload, match_result, existing_job.id
+                            )
+                            await self.repo.mark_job_notified(existing_job.id)
+                            if sent:
+                                dispatched_count += 1
+                                await asyncio.sleep(0.8)  # Delay prudente anti rate-limit
+                        except Exception as notif_err:
+                            logger.error(
+                                "Error al despachar oferta pendiente #%d: %s",
+                                existing_job.id,
+                                notif_err,
+                            )
+                    continue
+
+                # Oferta NUEVA: Insertar de inmediato en la base de datos
+                saved_job = await self.repo.add_job(
+                    source_id=db_source.id,
+                    external_id=job_payload.external_id,
+                    title=job_payload.title,
+                    company=job_payload.company,
+                    description=job_payload.description,
+                    location=job_payload.location_raw,
+                    region=job_payload.region,
+                    comuna=job_payload.comuna,
+                    modality=job_payload.modality.value,
+                    contract_type=job_payload.contract_type.value,
+                    schedule=job_payload.schedule.value,
+                    salary_min=job_payload.salary_min,
+                    salary_max=job_payload.salary_max,
+                    salary_type=job_payload.salary_type,
+                    requirements=job_payload.requirements,
+                    experience_required=job_payload.experience_required,
+                    education_required=job_payload.education_required,
+                    url=job_payload.url,
+                    published_at=job_payload.published_at,
+                    is_internship=job_payload.is_internship,
+                    dedup_hash=job_payload.dedup_hash,
+                    raw_data=str(job_payload.raw_data or {}),
+                )
+                await self.repo.increment_source_jobs_count(db_source.id, 1)
+
+                # Despacho en tiempo real al canal correspondiente
+                if self.notification_callback:
+                    match_result = evaluate_job_match(job_payload, criteria)
+                    try:
+                        sent = await self.notification_callback(
+                            job_payload, match_result, saved_job.id
+                        )
+                        await self.repo.mark_job_notified(saved_job.id)
+                        if sent:
+                            dispatched_count += 1
+                            await asyncio.sleep(0.8)  # Delay prudente de 800ms
+                    except Exception as notif_err:
+                        logger.error(
+                            "Error al despachar notificación a Discord: %s", notif_err
+                        )
+
+            logger.info(
+                "Ciclo de escaneo finalizado. Nuevas notificaciones enviadas a Discord: %d",
+                dispatched_count,
+            )
+            return dispatched_count
