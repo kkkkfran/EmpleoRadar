@@ -119,3 +119,33 @@ def test_routing_other_city_non_it_ignored():
     )
     dest_channel = bot.get_destination_channel_id(job)
     assert dest_channel is None
+
+
+def test_routing_tecnico_electrico_talcahuano_excluded():
+    bot = create_mock_bot()
+    job = JobPayload(
+        source_name="Chiletrabajos",
+        title="Técnico Eléctrico - Talcahuano",
+        description="Mantenimiento preventivo y correctivo de sistemas eléctricos industriales y tableros.",
+        region="Biobío",
+        comuna="Talcahuano",
+        url="https://chiletrabajos.cl/enc/7",
+    )
+    dest_channel = bot.get_destination_channel_id(job)
+    # No debe ir al canal de Informática a pesar de que mencione 'sistemas'
+    assert dest_channel is None
+
+
+def test_routing_bne_inacap_informatica():
+    bot = create_mock_bot()
+    job = JobPayload(
+        source_name="BNE",
+        title="Desarrollador Python / Backend",
+        description="Buscamos desarrollador para proyecto web cloud.",
+        region="Biobío",
+        comuna="Concepción",
+        url="https://www.bne.cl/oferta/123",
+    )
+    dest_channel = bot.get_destination_channel_id(job)
+    assert dest_channel == 1561207531659985106
+

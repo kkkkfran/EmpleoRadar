@@ -9,6 +9,7 @@ from app.sources.base import BaseJobSource
 from app.sources.bne import BNESource
 from app.sources.chiletrabajos import ChileTrabajosSource
 from app.sources.company_sites import CompanySitesSource
+from app.sources.inacap import InacapSource
 from app.sources.indeed import IndeedSource
 from app.sources.rss import GenericRSSSource
 from app.sources.trabajando import TrabajandoSource
@@ -29,6 +30,7 @@ class SourceRegistry:
         sources = [
             ChileTrabajosSource(),
             BNESource(),
+            InacapSource(),
             TrabajandoSource(),
             IndeedSource(),
             CompanySitesSource(),
@@ -71,5 +73,5 @@ class SourceRegistry:
         return [
             s
             for s in self._sources.values()
-            if not s.requires_auth and s.source_type in ("rss", "public_web")
+            if not s.requires_auth and s.source_type in ("rss", "public_web", "public_api")
         ]

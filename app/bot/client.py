@@ -10,7 +10,7 @@ from discord.ext import commands
 
 from app.bot.commands.job_commands import EmpleoCog
 from app.bot.embeds import create_job_card_embed
-from app.bot.views.job_views import JobCardView
+from app.bot.views.job_views import JobCardLayoutView, JobCardView
 from app.config import Settings
 from app.database.repository import Repository
 from app.jobs.models import JobMatchResult, JobPayload
@@ -100,34 +100,64 @@ class EmpleoRadarBot(commands.Bot):
         """
         import re
 
+        title_lower = job.title.lower()
+        desc_lower = (job.description or "").lower()
+        text = f"{title_lower} {desc_lower}"
+
+        # 1. Filtro estricto para oficios manuales/eléctricos/mecánicos no-IT
+        non_it_trades = [
+            "eléctrico", "electrico", "eléctrica", "electrica", "mecánico", "mecanico",
+            "electromecánico", "electromecanico", "climatización", "climatizacion",
+            "gasfiter", "gasfitería", "gasfiteria", "plomero", "soldador", "albañil",
+            "carpintero", "pintor", "maestro mayor", "chofer", "conductor", "guardia",
+            "aseo", "auxiliar de aseo", "manipuladora de alimentos"
+        ]
+        strict_it_in_title = [
+            "informática", "informático", "informatico", "software", "desarrollador",
+            "programador", "computación", "computacional", "ti", "devops", "cloud",
+            "ciberseguridad", "base de datos", "bases de datos", "fullstack", "backend", "frontend"
+        ]
+
+        is_non_it_trade = any(
+            re.search(r"\b" + re.escape(trade) + r"\b", title_lower) for trade in non_it_trades
+        )
+        has_strict_it_title = any(
+            re.search(r"\b" + re.escape(it_w) + r"\b", title_lower) for it_w in strict_it_in_title
+        )
+
+        # 2. ¿Es oferta de Informática / Tecnología? -> Canal de Informática
         it_keywords = [
             "informática", "informatico", "informático", "computación", "computacional",
             "desarrollo", "desarrollador", "software", "programador", "programación",
             "backend", "frontend", "full stack", "fullstack", "web", "devops",
             "python", "java", "javascript", "typescript", "c#", ".net", "php", "golang",
-            "sql", "base de datos", "database", "redes", "networking", "telecomunicaciones",
-            "soporte ti", "soporte técnico", "soporte computacional", "sistemas",
+            "sql", "base de datos", "bases de datos", "database", "redes", "networking",
+            "telecomunicaciones", "soporte ti", "soporte técnico", "soporte computacional",
+            "sistemas informáticos", "sistemas y computación", "ingeniero de sistemas",
+            "ingeniería de sistemas", "analista de sistemas", "administrador de sistemas",
             "infraestructura", "cloud", "aws", "azure", "ciberseguridad", "seguridad informática",
-            "qa", "testing", "datos", "data", "docente claude", "tecnología", "tecnologias"
+            "qa", "testing", "ciencia de datos", "data science", "data engineer", "data analytics",
+            "analista de datos", "tecnología", "tecnologias", "tecnologías"
         ]
 
-        text = f"{job.title} {job.description or ''}".lower()
-
-        # 1. ¿Es oferta de Informática / Tecnología? -> Canal de Informática
-        if any(re.search(r"\b" + re.escape(kw) + r"\b", text) for kw in it_keywords):
+        if (not is_non_it_trade or has_strict_it_title) and any(
+            re.search(r"\b" + re.escape(kw) + r"\b", text) for kw in it_keywords
+        ):
             return self.settings.discord_channel_informatica_id
 
-        # 2. ¿Es oferta dentro de Chillán? (Retail, tiendas, ropa, reponedor, bodega, etc.)
+        # 3. ¿Es oferta dentro de Chillán? (Retail, tiendas, ropa, reponedor, bodega, etc.)
         comuna_str = f"{job.comuna or ''} {job.location_raw or ''}".lower()
         if "chillan" in comuna_str or "chillán" in comuna_str:
             # Excluir profesiones que requieren título universitario estricto
-            title_lower = job.title.lower()
             professional_exclude = [
                 "médico", "medico", "abogado", "abogada", "psicólogo", "psicologa",
                 "psicólogo/a", "enfermero", "enfermera", "enfermero/a", "odontólogo",
                 "odontologo", "kinesiólogo", "kinesiologo", "químico farmacéutico"
             ]
-            if any(re.search(r"\b" + re.escape(excl) + r"\b", title_lower) for excl in professional_exclude):
+            if any(
+                re.search(r"\b" + re.escape(excl) + r"\b", title_lower)
+                for excl in professional_exclude
+            ):
                 return None
             return self.settings.discord_channel_chillan_id
 
@@ -140,37 +170,58 @@ class EmpleoRadarBot(commands.Bot):
         match_result: JobMatchResult,
         job_id: int,
     ) -> None:
-        """Envía una notificación al canal de Discord correspondiente.
+        """Envía una notificación al canal de Discord correspondiente usando Discord Components V2.
 
         NUNCA envía a mensaje privado (DM), respetando la directiva explícita del usuario.
         """
         try:
             channel_id = self.get_destination_channel_id(job)
             if not channel_id:
-                logger.debug("La vacante #%d no coincide con los canales de destino configurados.", job_id)
+                logger.debug(
+                    "La vacante #%d no coincide con los canales de destino configurados.", job_id
+                )
                 return
 
             target_channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
             if not target_channel or not isinstance(
                 target_channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)
             ):
-                logger.warning("No se pudo acceder al canal de destino %s para la oferta #%d.", channel_id, job_id)
+                logger.warning(
+                    "No se pudo acceder al canal de destino %s para la oferta #%d.",
+                    channel_id,
+                    job_id,
+                )
                 return
 
-            embed = create_job_card_embed(job, match_result=match_result, job_id=job_id)
-            view = JobCardView(
-                job_id=job_id,
-                job_url=job.url,
-                owner_id=self.owner_id,
-                application_service=self.app_service,
-                repository=self.repo,
-            )
+            try:
+                # Usar Discord Components V2 (LayoutView con Separator)
+                layout_view = JobCardLayoutView(
+                    job=job,
+                    match_result=match_result,
+                    job_id=job_id,
+                    owner_id=self.owner_id,
+                    application_service=self.app_service,
+                    repository=self.repo,
+                )
+                await target_channel.send(view=layout_view)
+            except Exception as v2_err:
+                logger.warning(
+                    "Fallo al enviar con Components V2 (aplicando fallback clásico): %s", v2_err
+                )
+                embed = create_job_card_embed(job, match_result=match_result, job_id=job_id)
+                view = JobCardView(
+                    job_id=job_id,
+                    job_url=job.url,
+                    owner_id=self.owner_id,
+                    application_service=self.app_service,
+                    repository=self.repo,
+                )
+                await target_channel.send(
+                    content="🔔 **¡Nueva oportunidad laboral detectada!**",
+                    embed=embed,
+                    view=view,
+                )
 
-            await target_channel.send(
-                content="🔔 **¡Nueva oportunidad laboral detectada!**",
-                embed=embed,
-                view=view,
-            )
             logger.info(
                 "Notificación publicada en #%s (%s) para oferta #%d: %s",
                 getattr(target_channel, "name", "canal"),

@@ -47,6 +47,7 @@ class JobSchedulerRunner:
         self._scheduler = AsyncIOScheduler()
         self._session: aiohttp.ClientSession | None = None
         self._is_running = False
+        self._polling_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Inicia el planificador y la sesión HTTP."""
@@ -76,9 +77,6 @@ class JobSchedulerRunner:
         self._scheduler.start()
         logger.info("Planificador de sondeo iniciado correctamente.")
 
-        # Ejecutar una primera pasada inicial en segundo plano
-        asyncio.create_task(self.run_all_sources_now())
-
     async def stop(self) -> None:
         """Detiene el planificador y cierra conexiones."""
         if not self._is_running:
@@ -92,21 +90,37 @@ class JobSchedulerRunner:
         logger.info("Planificador de sondeo detenido.")
 
     async def run_all_sources_now(self, since_date: datetime | None = None) -> None:
-        """Ejecuta un ciclo de sondeo inmediato sobre todas las fuentes activas."""
-        cutoff = since_date or datetime(2026, 10, 13)
-        sources = self.source_registry.get_active_sources()
-        for src in sources:
-            try:
-                await self.poll_source(src, min_date=cutoff)
-            except Exception as e:
-                logger.error("Error durante sondeo de fuente %s: %s", src.name, e)
+        """Ejecuta un ciclo de sondeo inmediato sobre todas las fuentes activas sin duplicar concurrencia."""
+        if self._polling_lock.locked():
+            logger.warning(
+                "Ciclo de sondeo actualmente en progreso. Omitiendo ejecución duplicada."
+            )
+            return
+
+        async with self._polling_lock:
+            cutoff = since_date or datetime(2026, 10, 13)
+            sources = self.source_registry.get_active_sources()
+            for src in sources:
+                try:
+                    await self._poll_source_internal(src, min_date=cutoff)
+                except Exception as e:
+                    logger.error("Error durante sondeo de fuente %s: %s", src.name, e)
 
     async def poll_source(
         self,
         source: BaseJobSource,
         min_date: datetime | None = None,
     ) -> None:
-        """Ejecuta el ciclo de extracción, deduplicación y notificación para una fuente."""
+        """Ejecuta el ciclo de extracción para una fuente protegiendo contra concurrencia."""
+        async with self._polling_lock:
+            await self._poll_source_internal(source, min_date=min_date)
+
+    async def _poll_source_internal(
+        self,
+        source: BaseJobSource,
+        min_date: datetime | None = None,
+    ) -> None:
+        """Lógica interna de extracción, deduplicación, ordenamiento y notificación."""
         if not self._session or self._session.closed:
             return
 
@@ -117,7 +131,9 @@ class JobSchedulerRunner:
         if db_owner:
             db_prefs = await self.repo.get_or_create_preferences(db_owner.id)
             if db_prefs.is_paused:
-                logger.info("Sondeo omitido temporalmente: notificaciones pausadas por el usuario.")
+                logger.info(
+                    "Sondeo omitido temporalmente: notificaciones pausadas por el usuario."
+                )
                 return
             criteria = criteria_from_db_preferences(db_prefs)
         else:
@@ -134,22 +150,42 @@ class JobSchedulerRunner:
                 raw_jobs = await source.fetch_jobs(self._session, criteria)
                 jobs_found = len(raw_jobs)
 
+                # Filtrar por fecha mínima (desde 13 de octubre en adelante)
+                valid_jobs: list[JobPayload] = []
                 for job_payload in raw_jobs:
-                    # Filtrar por fecha mínima (por defecto desde 13 de octubre)
                     pub_date = job_payload.published_at or datetime.now()
-                    if pub_date < cutoff_date:
-                        continue
+                    if pub_date >= cutoff_date:
+                        valid_jobs.append(job_payload)
 
+                # ORDENAMIENTO: Del más nuevo al más antiguo (las más recientes primero)
+                valid_jobs.sort(key=lambda j: j.published_at or datetime.min, reverse=True)
+
+                seen_in_batch: set[str] = set()
+
+                for job_payload in valid_jobs:
                     # Comprobar huella de deduplicación
                     if not job_payload.dedup_hash:
                         from app.jobs.deduplication import compute_job_fingerprint
 
                         compute_job_fingerprint(job_payload)
 
+                    # Deduplicación en el mismo lote
+                    if job_payload.dedup_hash in seen_in_batch:
+                        duplicates_found += 1
+                        continue
+                    seen_in_batch.add(job_payload.dedup_hash)
+
                     db_source = await self.repo.get_or_create_source(source.name)
                     existing_job = await self.repo.job_exists_by_source_and_external_id(
                         db_source.id, str(job_payload.external_id)
                     )
+
+                    # Si no coincide por ID externo, verificar por hash de contenido
+                    if not existing_job:
+                        hash_exists = await self.repo.job_exists_by_hash(job_payload.dedup_hash)
+                        if hash_exists:
+                            duplicates_found += 1
+                            continue
 
                     if existing_job:
                         # Si ya existe en base de datos pero aún no fue notificada
@@ -160,7 +196,7 @@ class JobSchedulerRunner:
                                     job_payload, match_result, existing_job.id
                                 )
                                 await self.repo.mark_job_notified(existing_job.id)
-                                await asyncio.sleep(0.3)
+                                await asyncio.sleep(0.4)
                             except Exception as notif_err:
                                 logger.error("Error al despachar notificación: %s", notif_err)
                         duplicates_found += 1
@@ -204,7 +240,7 @@ class JobSchedulerRunner:
                                 job_payload, match_result, saved_job.id
                             )
                             await self.repo.mark_job_notified(saved_job.id)
-                            await asyncio.sleep(0.3)
+                            await asyncio.sleep(0.4)
                         except Exception as notif_err:
                             logger.error(
                                 "Error al despachar notificación a Discord: %s", notif_err
@@ -226,3 +262,4 @@ class JobSchedulerRunner:
                 duplicates_found=duplicates_found,
                 error_message=error_msg,
             )
+
