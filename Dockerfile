@@ -30,11 +30,11 @@ RUN groupadd -g 10001 empleoradar && \
 WORKDIR /app
 
 # Copiar configuración de dependencias
-COPY pyproject.toml ./
+COPY pyproject.toml README.md ./
 
 # Instalar dependencias de Python
-RUN pip install --upgrade pip && \
-    pip install .
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir .
 
 # Copiar el código fuente de la aplicación y scripts
 COPY app/ ./app/
