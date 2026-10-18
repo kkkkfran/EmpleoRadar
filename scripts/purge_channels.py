@@ -28,7 +28,7 @@ async def reset_database_notifications() -> None:
         db = Database(settings.database_url)
         repo = Repository(db)
         count = await repo.reset_all_notifications()
-        print(f"✅ Se resetearon {count} ofertas en base de datos para reenvío.")
+        print(f"[OK] Se resetearon {count} ofertas en base de datos para reenvio.")
         await db.close()
     except Exception as e:
         print(f"Nota/Advertencia reseteando base de datos: {e}")
@@ -50,7 +50,7 @@ async def on_ready() -> None:
                 total_deleted += len(deleted)
                 print(f"  Borrados {total_deleted} mensajes...")
                 await asyncio.sleep(0.5)
-            print(f"✅ Canal #{ch_name} completamente limpio ({total_deleted} mensajes eliminados).")
+            print(f"[OK] Canal #{ch_name} completamente limpio ({total_deleted} mensajes eliminados).")
         except Exception as e:
             print(f"Error al limpiar canal {cid}: {e}")
 
