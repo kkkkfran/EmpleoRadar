@@ -30,3 +30,4 @@ volumes:
     name: empleoradar-data
   empleoradar-logs:
     name: empleoradar-logs
+

@@ -28,10 +28,11 @@ async def main() -> None:
     # 1. Cargar y validar configuración
     try:
         settings = get_settings()
-    except SystemExit:
+    except SystemExit as se:
+        print(f"\n❌ ERROR DE CONFIGURACIÓN:\n{se}\n", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print(f"Error fatal al inicializar configuración: {e}", file=sys.stderr)
+        print(f"\n❌ Error fatal al inicializar configuración:\n{e}\n", file=sys.stderr)
         sys.exit(1)
 
     # 2. Inicializar sistema de logs estructurado y redacción

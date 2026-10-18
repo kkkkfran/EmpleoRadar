@@ -74,10 +74,12 @@ class ChileTrabajosSource(BaseJobSource):
 
     def _parse_rss_feed(self, xml_text: str) -> list[JobPayload]:
         """Parsea el XML de un feed RSS de ChileTrabajos."""
-        soup = BeautifulSoup(xml_text, "xml")
+        try:
+            soup = BeautifulSoup(xml_text, "xml")
+        except Exception:
+            soup = BeautifulSoup(xml_text, "html.parser")
         items = soup.find_all("item")
         if not items:
-            # Fallback en caso de que el parser no reconozca 'xml'
             soup = BeautifulSoup(xml_text, "html.parser")
             items = soup.find_all("item")
 

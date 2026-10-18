@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
@@ -67,6 +67,51 @@ class Settings(BaseSettings):
             p = self.base_dir / p
         return p
 
+    @field_validator("discord_guild_id", mode="before")
+    @classmethod
+    def validate_optional_guild_id(cls, v: Any) -> int | None:
+        if v is None or v == "" or (isinstance(v, str) and not v.strip()):
+            return None
+        try:
+            return int(v)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"DISCORD_GUILD_ID debe ser un número entero válido (recibido: {v!r})") from exc
+
+    @field_validator("discord_owner_id", mode="before")
+    @classmethod
+    def validate_owner_id(cls, v: Any) -> int:
+        if v is None or v == "" or (isinstance(v, str) and not v.strip()):
+            raise ValueError(
+                "DISCORD_OWNER_ID no puede estar vacío. Debes ingresar tu ID numérico de usuario de Discord."
+            )
+        try:
+            return int(v)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                f"DISCORD_OWNER_ID debe ser un número entero (ejemplo: 123456789012345678, recibido: {v!r})"
+            ) from exc
+
+    @field_validator("discord_bot_token", mode="before")
+    @classmethod
+    def validate_bot_token(cls, v: Any) -> str:
+        if v is None or not str(v).strip():
+            raise ValueError(
+                "DISCORD_BOT_TOKEN no puede estar vacío. Debes ingresar el token de tu bot de Discord."
+            )
+        return str(v).strip()
+
+    @field_validator("poll_interval_minutes", "max_concurrent_requests", "request_timeout_seconds", mode="before")
+    @classmethod
+    def validate_optional_numeric(cls, v: Any, info: Any) -> Any:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            defaults = {
+                "poll_interval_minutes": 15,
+                "max_concurrent_requests": 3,
+                "request_timeout_seconds": 30,
+            }
+            return defaults.get(info.field_name, v)
+        return v
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
@@ -105,14 +150,22 @@ def get_settings() -> Settings:
     try:
         return Settings()
     except Exception as e:
-        missing = []
-        for field_name, field_info in Settings.model_fields.items():
-            env_name = field_name.upper()
-            if field_info.is_required() and not os.environ.get(env_name):
-                missing.append(env_name)
-        if missing:
+        from pydantic import ValidationError
+
+        if isinstance(e, ValidationError):
+            err_lines = []
+            for err in e.errors():
+                loc = " -> ".join(str(item) for item in err.get("loc", []))
+                err_lines.append(f"  • {loc.upper()}: {err.get('msg')}")
+            details = "\n".join(err_lines)
             raise SystemExit(
-                f"Variables de entorno requeridas no configuradas: {', '.join(missing)}\n"
-                f"Copia .env.example a .env y completa los valores."
+                "Faltan variables obligatorias en tu archivo .env:\n"
+                f"{details}\n\n"
+                "Para solucionarlo:\n"
+                "1. Abre tu archivo .env (o cópialo desde .env.example si aún no existe):\n"
+                "   copy .env.example .env\n"
+                "2. Edita .env con tus credenciales de Discord:\n"
+                "   DISCORD_BOT_TOKEN=tu_token_aqui\n"
+                "   DISCORD_OWNER_ID=tu_id_numerico_aqui\n"
             ) from e
-        raise
+        raise SystemExit(f"Error al cargar configuración: {e}") from e

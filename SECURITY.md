@@ -29,3 +29,4 @@ EmpleoRadar es un bot personal concebido para proteger la privacidad del usuario
 ## 2. Reporte de Vulnerabilidades
 
 Si detectas cualquier problema de seguridad o fallo en las validaciones, por favor reporta el hallazgo de forma confidencial abriendo un reporte privado en el repositorio o contactando al mantenedor.
+

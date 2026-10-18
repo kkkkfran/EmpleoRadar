@@ -54,7 +54,10 @@ class GenericRSSSource(BaseJobSource):
             return []
 
     def _parse_feed(self, content: str) -> list[JobPayload]:
-        soup = BeautifulSoup(content, "xml")
+        try:
+            soup = BeautifulSoup(content, "xml")
+        except Exception:
+            soup = BeautifulSoup(content, "html.parser")
         items = soup.find_all("item")
         if not items:
             # Intentar formato Atom (<entry>)
