@@ -16,79 +16,123 @@ def create_job_card_embed(
     match_result: JobMatchResult | None = None,
     job_id: int | None = None,
 ) -> discord.Embed:
-    """Genera la tarjeta visual completa de una oferta de empleo para Discord."""
-    # Color según compatibilidad
+    """Genera la tarjeta visual formal de una oferta de empleo para Discord como discord.Embed."""
     score = match_result.score if match_result else 50
+    # Color moderno acorde al score de compatibilidad (Cian #00b0f4, Verde o Azul)
     if score >= 80:
-        color = discord.Color.green()
+        color = discord.Color.from_rgb(0, 200, 115)  # Verde esmeralda moderno
     elif score >= 50:
-        color = discord.Color.blue()
+        color = discord.Color.from_rgb(0, 176, 244)  # Cian/Azul moderno #00b0f4
     else:
-        color = discord.Color.orange()
+        color = discord.Color.from_rgb(52, 152, 219)  # Azul clásico
 
-    title = job.title[:250]
-    company = job.company or "Empresa Confidencial"
+    title = job.title[:250] if job.title else "Oferta Laboral"
+
+    # Fecha de publicación original para que Discord muestre la fecha/hora nativamente
+    pub_timestamp = job.published_at or getattr(job, "detected_at", None) or datetime.utcnow()
 
     embed = discord.Embed(
         title=f"💼 {title}",
         url=job.url,
-        description=f"**Empresa:** {company}",
         color=color,
-        timestamp=job.published_at or getattr(job, "detected_at", datetime.utcnow()),
+        timestamp=pub_timestamp,
     )
 
-    # Ubicación
+    # 1. Empresa y Ubicación
+    company = job.company or "Confidencial / Empresa destacada"
     loc_parts = []
     if job.comuna:
         loc_parts.append(job.comuna)
-    if job.region:
+    if job.region and job.region != job.comuna:
         loc_parts.append(job.region)
     location_str = (
         ", ".join(loc_parts)
         if loc_parts
         else (getattr(job, "location_raw", None) or getattr(job, "location", None) or "Chile")
     )
-    embed.add_field(name="📍 Ubicación", value=location_str, inline=True)
-
-    # Modalidad y Contrato
-    modality_val = job.modality.value if hasattr(job.modality, "value") else str(job.modality)
-    contract_val = (
-        job.contract_type.value if hasattr(job.contract_type, "value") else str(job.contract_type)
-    )
-    embed.add_field(name="🏢 Modalidad", value=modality_val.capitalize(), inline=True)
     embed.add_field(
-        name="📄 Contrato", value=contract_val.replace("_", " ").capitalize(), inline=True
+        name="🏢 Empresa y Ubicación",
+        value=f"🏢 **Empresa:** {company}\n📍 **Ubicación:** {location_str}",
+        inline=False,
     )
 
-    # Sueldo
+    # 2. Modalidad, Contrato y Jornada
+    modality_val = (
+        job.modality.value if hasattr(job.modality, "value") else str(job.modality or "desconocido")
+    )
+    contract_val = (
+        job.contract_type.value
+        if hasattr(job.contract_type, "value")
+        else str(job.contract_type or "desconocido")
+    )
+    schedule_val = (
+        job.schedule.value
+        if hasattr(job, "schedule") and hasattr(job.schedule, "value")
+        else str(getattr(job, "schedule", "desconocido") or "desconocido")
+    )
+    embed.add_field(
+        name="⚙️ Condiciones Laborales",
+        value=(
+            f"⚙️ **Modalidad:** {modality_val.capitalize()} | "
+            f"📄 **Contrato:** {contract_val.replace('_', ' ').capitalize()} | "
+            f"⏰ **Jornada:** {schedule_val.capitalize()}"
+        ),
+        inline=False,
+    )
+
+    # 3. Remuneración y Requisitos (opcional si hay información)
+    extra_details = []
     if job.salary_min or job.salary_max:
         if job.salary_min and job.salary_max and job.salary_min != job.salary_max:
-            sal_str = f"${job.salary_min:,} - ${job.salary_max:,} CLP"
+            sal_str = f"${job.salary_min:,.0f} - ${job.salary_max:,.0f}".replace(",", ".")
         else:
             sal_val = job.salary_max or job.salary_min
-            sal_str = f"${sal_val:,} CLP"
-        if getattr(job, "salary_type", None):
-            sal_str += f" ({job.salary_type})"
-    else:
-        sal_str = "No publicado (A convenir)"
-    embed.add_field(name="💰 Remuneración", value=sal_str, inline=True)
+            sal_str = f"${sal_val:,.0f}".replace(",", ".")
+        sal_type = f" ({job.salary_type})" if getattr(job, "salary_type", None) else ""
+        extra_details.append(f"💰 **Remuneración:** {sal_str}{sal_type} CLP")
 
-    # Experiencia
-    exp_str = job.experience_required or "No especificada"
-    embed.add_field(name="⏳ Experiencia", value=exp_str, inline=True)
+    if job.experience_required:
+        extra_details.append(f"⏳ **Experiencia:** {job.experience_required}")
+    if getattr(job, "education_required", None):
+        extra_details.append(f"🎓 **Nivel educacional:** {job.education_required}")
 
-    # Compatibilidad
-    if match_result:
-        reasons_text = "\n".join(f"• {r}" for r in match_result.match_reasons[:3])
-        if not reasons_text:
-            reasons_text = "Evaluada según perfil y ubicación."
+    if extra_details:
         embed.add_field(
-            name=f"🎯 Compatibilidad: {match_result.score}/100",
-            value=reasons_text,
+            name="📋 Detalles Adicionales",
+            value="\n".join(extra_details),
             inline=False,
         )
 
-    # Fuente y verificación
+    # 4. Compatibilidad y desglose de coincidencias
+    reasons = (
+        getattr(match_result, "match_reasons", [])
+        or getattr(match_result, "reasons", [])
+        if match_result
+        else []
+    )
+    if reasons:
+        reasons_text = "\n".join(f"• {r}" for r in reasons[:3])
+    else:
+        reasons_text = "• Coincidencia evaluada según perfil y criterios de búsqueda."
+
+    embed.add_field(
+        name=f"🎯 Compatibilidad: {score}/100",
+        value=reasons_text,
+        inline=False,
+    )
+
+    # 5. Resumen / descripción del cargo
+    if job.description:
+        clean_desc = " ".join(job.description.split())
+        if len(clean_desc) > 350:
+            clean_desc = clean_desc[:347] + "..."
+        embed.add_field(
+            name="📝 Resumen del cargo",
+            value=clean_desc,
+            inline=False,
+        )
+
+    # Footer con Fuente e ID
     source_name = getattr(job, "source_name", None) or (
         job.source.name if hasattr(job, "source") and job.source else "Fuente externa"
     )

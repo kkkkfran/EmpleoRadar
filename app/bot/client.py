@@ -10,7 +10,7 @@ from discord.ext import commands
 
 from app.bot.commands.job_commands import EmpleoCog
 from app.bot.embeds import create_job_card_embed
-from app.bot.views.job_views import JobCardLayoutView, JobCardView
+from app.bot.views.job_views import JobCardView
 from app.config import Settings
 from app.database.repository import Repository
 from app.jobs.models import JobMatchResult, JobPayload
@@ -222,34 +222,9 @@ class EmpleoRadarBot(commands.Bot):
                 )
                 return False
 
-            try:
-                # Usar Discord Components V2 (LayoutView con Separator)
-                layout_view = JobCardLayoutView(
-                    job=job,
-                    match_result=match_result,
-                    job_id=job_id,
-                    owner_id=self.owner_id,
-                    application_service=self.app_service,
-                    repository=self.repo,
-                )
-                await target_channel.send(view=layout_view)
-            except Exception as v2_err:
-                logger.warning(
-                    "Fallo al enviar con Components V2 (aplicando fallback clásico): %s", v2_err
-                )
-                embed = create_job_card_embed(job, match_result=match_result, job_id=job_id)
-                view = JobCardView(
-                    job_id=job_id,
-                    job_url=job.url,
-                    owner_id=self.owner_id,
-                    application_service=self.app_service,
-                    repository=self.repo,
-                )
-                await target_channel.send(
-                    content="🔔 **¡Nueva oportunidad laboral detectada!**",
-                    embed=embed,
-                    view=view,
-                )
+            embed = create_job_card_embed(job, match_result=match_result, job_id=job_id)
+            view = JobCardView(job_url=job.url, job_id=job_id)
+            await target_channel.send(embed=embed, view=view)
 
             logger.info(
                 "Notificación publicada en #%s (%s) para oferta #%d: %s",
