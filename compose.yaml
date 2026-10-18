@@ -1,0 +1,32 @@
+services:
+  empleoradar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: empleoradar-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=America/Santiago
+    volumes:
+      - empleoradar-data:/app/data
+      - empleoradar-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  empleoradar-data:
+    name: empleoradar-data
+  empleoradar-logs:
+    name: empleoradar-logs
