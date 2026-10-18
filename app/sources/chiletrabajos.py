@@ -86,9 +86,17 @@ class ChileTrabajosSource(BaseJobSource):
             "https://www.chiletrabajos.cl/encuentra-un-empleo?2=ingeniero+informatica",
             # 5. Búsqueda específica por perfil Desarrollador
             "https://www.chiletrabajos.cl/encuentra-un-empleo?2=desarrollador",
-            # 6. Todas las ofertas en Chillán
+            # 6. Todas las ofertas generales en Chillán
             "https://www.chiletrabajos.cl/encuentra-un-empleo?13=1036",
-            # 7. Todas las ofertas en Concepción
+            # 7. Ventas y Comercial en Chillán (tiendas, retail, asistentes)
+            "https://www.chiletrabajos.cl/encuentra-un-empleo?categoria=2027&13=1036",
+            # 8. Operarios y Bodega en Chillán (reponedores, empaque, bodega)
+            "https://www.chiletrabajos.cl/encuentra-un-empleo?categoria=2025&13=1036",
+            # 9. Logística y Distribución en Chillán
+            "https://www.chiletrabajos.cl/encuentra-un-empleo?categoria=2021&13=1036",
+            # 10. Búsqueda de reponedores y retail en Chillán
+            "https://www.chiletrabajos.cl/encuentra-un-empleo?2=reponedor&13=1036",
+            # 11. Todas las ofertas en Concepción
             "https://www.chiletrabajos.cl/encuentra-un-empleo?13=1035",
         ]
 

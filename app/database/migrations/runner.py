@@ -133,3 +133,21 @@ async def migrate_002(session: AsyncSession) -> None:
             text("ALTER TABLE candidate_preferences ADD COLUMN notification_channel_id INTEGER")
         )
 
+
+@register_migration("003", "Agregar canales separados para informatica y chillan")
+async def migrate_003(session: AsyncSession) -> None:
+    """Agrega channel_informatica_id y channel_chillan_id a candidate_preferences."""
+    import contextlib
+
+    from sqlalchemy import text
+
+    with contextlib.suppress(Exception):
+        await session.execute(
+            text("ALTER TABLE candidate_preferences ADD COLUMN channel_informatica_id INTEGER")
+        )
+    with contextlib.suppress(Exception):
+        await session.execute(
+            text("ALTER TABLE candidate_preferences ADD COLUMN channel_chillan_id INTEGER")
+        )
+
+

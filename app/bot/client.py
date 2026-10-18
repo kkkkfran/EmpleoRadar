@@ -70,26 +70,69 @@ class EmpleoRadarBot(commands.Bot):
 
     async def on_ready(self) -> None:
         """Callback ejecutado cuando el bot se conecta satisfactoriamente a Discord."""
+        from datetime import datetime
+
         logger.info(
             "✅ EmpleoRadar conectado como %s (ID: %d)", self.user, self.user.id if self.user else 0
         )
         activity = discord.Activity(
             type=discord.ActivityType.watching,
-            name="ofertas laborales en Ñuble",
+            name="ofertas en Chillán e Informática",
         )
         await self.change_presence(activity=activity)
 
-    async def get_notification_channel_id(self) -> int | None:
-        """Determina el ID del canal configurado para alertas."""
-        try:
-            db_owner = await self.repo.get_owner(self.owner_id)
-            if db_owner:
-                prefs = await self.repo.get_or_create_preferences(db_owner.id)
-                if prefs.notification_channel_id:
-                    return prefs.notification_channel_id
-        except Exception as e:
-            logger.debug("Error consultando preferences en BD: %s", e)
-        return self.settings.discord_channel_id
+        # Iniciar de inmediato la detección y publicación de ofertas desde el 13 de octubre
+        if self.scheduler_runner:
+            logger.info(
+                "🚀 Iniciando escaneo y publicación automática de vacantes desde el 13 de octubre..."
+            )
+            import asyncio
+
+            asyncio.create_task(
+                self.scheduler_runner.run_all_sources_now(since_date=datetime(2026, 10, 13))
+            )
+
+    def get_destination_channel_id(self, job: JobPayload) -> int | None:
+        """Determina el canal específico de Discord según el tipo de oferta y ubicación.
+
+        • Informática general -> Canal 1561207531659985106
+        • Otros empleos dentro de Chillán (retail, tiendas, ropa, reponedor, etc.) -> Canal 1561217778722283613
+        """
+        import re
+
+        it_keywords = [
+            "informática", "informatico", "informático", "computación", "computacional",
+            "desarrollo", "desarrollador", "software", "programador", "programación",
+            "backend", "frontend", "full stack", "fullstack", "web", "devops",
+            "python", "java", "javascript", "typescript", "c#", ".net", "php", "golang",
+            "sql", "base de datos", "database", "redes", "networking", "telecomunicaciones",
+            "soporte ti", "soporte técnico", "soporte computacional", "sistemas",
+            "infraestructura", "cloud", "aws", "azure", "ciberseguridad", "seguridad informática",
+            "qa", "testing", "datos", "data", "docente claude", "tecnología", "tecnologias"
+        ]
+
+        text = f"{job.title} {job.description or ''}".lower()
+
+        # 1. ¿Es oferta de Informática / Tecnología? -> Canal de Informática
+        if any(re.search(r"\b" + re.escape(kw) + r"\b", text) for kw in it_keywords):
+            return self.settings.discord_channel_informatica_id
+
+        # 2. ¿Es oferta dentro de Chillán? (Retail, tiendas, ropa, reponedor, bodega, etc.)
+        comuna_str = f"{job.comuna or ''} {job.location_raw or ''}".lower()
+        if "chillan" in comuna_str or "chillán" in comuna_str:
+            # Excluir profesiones que requieren título universitario estricto
+            title_lower = job.title.lower()
+            professional_exclude = [
+                "médico", "medico", "abogado", "abogada", "psicólogo", "psicologa",
+                "psicólogo/a", "enfermero", "enfermera", "enfermero/a", "odontólogo",
+                "odontologo", "kinesiólogo", "kinesiologo", "químico farmacéutico"
+            ]
+            if any(re.search(r"\b" + re.escape(excl) + r"\b", title_lower) for excl in professional_exclude):
+                return None
+            return self.settings.discord_channel_chillan_id
+
+        # No califica para los canales seleccionados
+        return None
 
     async def notify_new_job(
         self,
@@ -97,8 +140,23 @@ class EmpleoRadarBot(commands.Bot):
         match_result: JobMatchResult,
         job_id: int,
     ) -> None:
-        """Envía una notificación de nueva vacante al canal configurado o por mensaje directo."""
+        """Envía una notificación al canal de Discord correspondiente.
+
+        NUNCA envía a mensaje privado (DM), respetando la directiva explícita del usuario.
+        """
         try:
+            channel_id = self.get_destination_channel_id(job)
+            if not channel_id:
+                logger.debug("La vacante #%d no coincide con los canales de destino configurados.", job_id)
+                return
+
+            target_channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
+            if not target_channel or not isinstance(
+                target_channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)
+            ):
+                logger.warning("No se pudo acceder al canal de destino %s para la oferta #%d.", channel_id, job_id)
+                return
+
             embed = create_job_card_embed(job, match_result=match_result, job_id=job_id)
             view = JobCardView(
                 job_id=job_id,
@@ -108,48 +166,20 @@ class EmpleoRadarBot(commands.Bot):
                 repository=self.repo,
             )
 
-            channel_id = await self.get_notification_channel_id()
-            target_channel = None
-
-            if channel_id:
-                try:
-                    target_channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
-                except Exception as ex:
-                    logger.warning("No se pudo obtener el canal de alertas #%s: %s", channel_id, ex)
-
-            if target_channel and isinstance(
-                target_channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)
-            ):
-                await target_channel.send(
-                    content="🔔 **¡Nueva vacante relevante detectada!**",
-                    embed=embed,
-                    view=view,
-                )
-                logger.info(
-                    "Notificación enviada al canal #%s (%s) para oferta #%d: %s",
-                    getattr(target_channel, "name", "canal"),
-                    channel_id,
-                    job_id,
-                    job.title,
-                )
-            else:
-                # Fallback al mensaje directo con el propietario
-                owner = await self.fetch_user(self.owner_id)
-                if not owner:
-                    logger.warning("No se pudo obtener el usuario propietario con ID %s.", self.owner_id)
-                    return
-
-                dm_channel = owner.dm_channel or await owner.create_dm()
-                await dm_channel.send(
-                    content="🔔 **¡Nueva vacante relevante detectada para tu perfil!**",
-                    embed=embed,
-                    view=view,
-                )
-                logger.info(
-                    "Notificación enviada por MD al propietario para oferta #%d: %s", job_id, job.title
-                )
+            await target_channel.send(
+                content="🔔 **¡Nueva oportunidad laboral detectada!**",
+                embed=embed,
+                view=view,
+            )
+            logger.info(
+                "Notificación publicada en #%s (%s) para oferta #%d: %s",
+                getattr(target_channel, "name", "canal"),
+                channel_id,
+                job_id,
+                job.title,
+            )
         except Exception as e:
-            logger.error("Fallo al enviar notificación para oferta #%d: %s", job_id, e)
+            logger.error("Error al publicar notificación para oferta #%d: %s", job_id, e)
 
     async def on_tree_error(
         self,

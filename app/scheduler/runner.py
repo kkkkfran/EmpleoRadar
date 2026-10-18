@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable, Coroutine
+from datetime import datetime
 from typing import Any
 
 import aiohttp
@@ -90,16 +91,26 @@ class JobSchedulerRunner:
         self._is_running = False
         logger.info("Planificador de sondeo detenido.")
 
-    async def run_all_sources_now(self) -> None:
+    async def run_all_sources_now(self, since_date: datetime | None = None) -> None:
         """Ejecuta un ciclo de sondeo inmediato sobre todas las fuentes activas."""
+        cutoff = since_date or datetime(2026, 10, 13)
         sources = self.source_registry.get_active_sources()
-        tasks = [self.poll_source(src) for src in sources]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        for src in sources:
+            try:
+                await self.poll_source(src, min_date=cutoff)
+            except Exception as e:
+                logger.error("Error durante sondeo de fuente %s: %s", src.name, e)
 
-    async def poll_source(self, source: BaseJobSource) -> None:
+    async def poll_source(
+        self,
+        source: BaseJobSource,
+        min_date: datetime | None = None,
+    ) -> None:
         """Ejecuta el ciclo de extracción, deduplicación y notificación para una fuente."""
         if not self._session or self._session.closed:
             return
+
+        cutoff_date = min_date or datetime(2026, 10, 13)
 
         # Verificar si el usuario pausó las notificaciones
         db_owner = await self.repo.get_owner(self.owner_id)
@@ -109,10 +120,8 @@ class JobSchedulerRunner:
                 logger.info("Sondeo omitido temporalmente: notificaciones pausadas por el usuario.")
                 return
             criteria = criteria_from_db_preferences(db_prefs)
-            min_score = db_prefs.min_score_notify
         else:
             criteria = JobMatchCriteria()
-            min_score = 30
 
         async with self.semaphore:
             start_time = time.time()
@@ -126,19 +135,36 @@ class JobSchedulerRunner:
                 jobs_found = len(raw_jobs)
 
                 for job_payload in raw_jobs:
-                    # Comprobar si ya existe por hash de deduplicación
+                    # Filtrar por fecha mínima (por defecto desde 13 de octubre)
+                    pub_date = job_payload.published_at or datetime.now()
+                    if pub_date < cutoff_date:
+                        continue
+
+                    # Comprobar huella de deduplicación
                     if not job_payload.dedup_hash:
                         from app.jobs.deduplication import compute_job_fingerprint
 
                         compute_job_fingerprint(job_payload)
 
-                    exists = await self.repo.job_exists_by_hash(job_payload.dedup_hash)
-                    if exists:
+                    db_source = await self.repo.get_or_create_source(source.name)
+                    existing_job = await self.repo.job_exists_by_source_and_external_id(
+                        db_source.id, str(job_payload.external_id)
+                    )
+
+                    if existing_job:
+                        # Si ya existe en base de datos pero aún no fue notificada
+                        if not existing_job.notified and self.notification_callback:
+                            match_result = evaluate_job_match(job_payload, criteria)
+                            try:
+                                await self.notification_callback(
+                                    job_payload, match_result, existing_job.id
+                                )
+                                await self.repo.mark_job_notified(existing_job.id)
+                                await asyncio.sleep(0.3)
+                            except Exception as notif_err:
+                                logger.error("Error al despachar notificación: %s", notif_err)
                         duplicates_found += 1
                         continue
-
-                    # Obtener ID de la fuente en BD
-                    db_source = await self.repo.get_or_create_source(source.name)
 
                     # Guardar la nueva vacante
                     saved_job = await self.repo.add_job(
@@ -171,17 +197,14 @@ class JobSchedulerRunner:
                     # Evaluar compatibilidad con el perfil
                     match_result = evaluate_job_match(job_payload, criteria)
 
-                    # Notificar si califica
-                    if (
-                        not match_result.is_excluded
-                        and match_result.score >= min_score
-                        and self.notification_callback
-                    ):
+                    # Despachar notificación
+                    if self.notification_callback:
                         try:
                             await self.notification_callback(
                                 job_payload, match_result, saved_job.id
                             )
                             await self.repo.mark_job_notified(saved_job.id)
+                            await asyncio.sleep(0.3)
                         except Exception as notif_err:
                             logger.error(
                                 "Error al despachar notificación a Discord: %s", notif_err

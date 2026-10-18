@@ -102,10 +102,10 @@ class EmpleoCog(
         embed.add_field(
             name="⚙️ Configuración y Alertas",
             value=(
-                "• `/empleo canal [canal]` - Elige el canal de Discord para recibir alertas.\n"
+                "• `/empleo canal [tipo] [canal]` - Consulta o reasigna los canales de Informática y Chillán.\n"
                 "• `/empleo sincronizar [desde_fecha]` - Escanea y publica vacantes desde el 13 de octubre.\n"
                 "• `/empleo fuentes` - Lista el estado operativo de los portales de empleo.\n"
-                "• `/empleo estado` - Resumen rápido de actividad y canal activo.\n"
+                "• `/empleo estado` - Resumen rápido de actividad y canales configurados.\n"
                 "• `/empleo salud` - Diagnóstico de base de datos, memoria y conexiones.\n"
                 "• `/empleo pausa` / `/empleo reanudar` - Pausar o reactivar notificaciones."
             ),
@@ -116,49 +116,90 @@ class EmpleoCog(
     # --- /empleo canal ---
     @app_commands.command(
         name="canal",
-        description="Configura el canal de Discord donde se publicarán las alertas de nuevas vacantes.",
+        description="Muestra o configura los canales de Discord para Informática y Chillán.",
     )
     @app_commands.describe(
-        canal="Canal de texto a asignar (si no se especifica, se utiliza el canal actual)"
+        tipo="Categoría del canal a actualizar (opcional)",
+        canal="Canal de texto a asignar (opcional)",
+    )
+    @app_commands.choices(
+        tipo=[
+            app_commands.Choice(
+                name="Informática general (Chile / Remoto / Ñuble / Biobío)",
+                value="informatica",
+            ),
+            app_commands.Choice(
+                name="Chillán: Otros empleos (Retail / Tiendas / Sin título)",
+                value="chillan",
+            ),
+        ]
     )
     @app_commands.check(owner_check)
     async def configurar_canal(
         self,
         interaction: discord.Interaction,
+        tipo: str | None = None,
         canal: discord.TextChannel | None = None,
     ) -> None:
-        target_channel = canal or interaction.channel
-        if not isinstance(target_channel, (discord.TextChannel, discord.Thread)):
-            await interaction.response.send_message(
-                "❌ Debes seleccionar o ejecutar este comando dentro de un canal de texto válido.",
-                ephemeral=True,
-            )
-            return
-
+        await interaction.response.defer(thinking=True)
         db_owner = await self.repo.get_or_create_owner(interaction.user.id)
-        await self.repo.update_preferences(
-            owner_id=db_owner.id,
-            notification_channel_id=target_channel.id,
+        prefs = await self.repo.get_or_create_preferences(db_owner.id)
+
+        # Si se especificó un canal y un tipo para actualizar
+        if canal:
+            target_channel = canal
+            if tipo == "informatica":
+                await self.repo.update_preferences(
+                    owner_id=db_owner.id,
+                    channel_informatica_id=target_channel.id,
+                )
+                self.bot.settings.discord_channel_informatica_id = target_channel.id
+            elif tipo == "chillan":
+                await self.repo.update_preferences(
+                    owner_id=db_owner.id,
+                    channel_chillan_id=target_channel.id,
+                )
+                self.bot.settings.discord_channel_chillan_id = target_channel.id
+            else:
+                await self.repo.update_preferences(
+                    owner_id=db_owner.id,
+                    notification_channel_id=target_channel.id,
+                )
+
+        inf_id = (
+            getattr(prefs, "channel_informatica_id", None)
+            or getattr(self.bot.settings, "discord_channel_informatica_id", None)
+            or 1561207531659985106
+        )
+        chi_id = (
+            getattr(prefs, "channel_chillan_id", None)
+            or getattr(self.bot.settings, "discord_channel_chillan_id", None)
+            or 1561217778722283613
         )
 
         embed = discord.Embed(
-            title="📢 Canal de Alertas Configurado Exitosamente",
+            title="📢 Canales de Alertas de EmpleoRadar",
             description=(
-                f"A partir de ahora, todas las nuevas vacantes relevantes se publicarán automáticamente en **<#{target_channel.id}>**.\n\n"
-                "🎯 **Perfil prioritario configurado:**\n"
-                "• **Cargo:** Ingeniero en Informática / Sistemas / Desarrollo / TI\n"
-                "• **Zona de búsqueda:** Entre Concepción y Región de Ñuble (más vacantes remotas)\n"
-                "• **Comunas destacadas:** Chillán, Chillán Viejo, San Carlos, Concepción, Talcahuano, San Pedro de la Paz, etc.\n\n"
-                "💡 Puedes usar `/empleo sincronizar` para publicar de inmediato las vacantes detectadas desde el 13 de octubre."
+                "Las vacantes se publican automáticamente y de forma separada según el tipo de oferta:\n\n"
+                f"💻 **Canal 1: Informática General**\n"
+                f"• Canal asignado: <#{inf_id}> (ID: `{inf_id}`)\n"
+                "• **Cargos:** Ing. en Informática, Desarrollo (Python/Golang/.NET/JS), Soporte TI, Redes, Cloud, DevOps, etc.\n"
+                "• **Zonas:** Entre Concepción y Ñuble, Santiago y vacantes Remotas para Chile.\n\n"
+                f"🛍️ **Canal 2: Otros Empleos en Chillán (Sin título)**\n"
+                f"• Canal asignado: <#{chi_id}> (ID: `{chi_id}`)\n"
+                "• **Cargos:** Retail, tiendas (Ripley, Falabella, Paris, Jumbo, Líder), reponedores, organizar ropa, bodega, cajeros, operarios.\n"
+                "• **Filtro estricto:** Solo ofertas dentro de Chillán / Chillán Viejo y sin requisito de título universitario.\n\n"
+                "🚫 **Mensajes Privados (MD):** Desactivados estrictamente. Todas las alertas van directo a sus canales.\n"
+                "💡 El bot escanea automáticamente desde el 13 de octubre al iniciar."
             ),
-            color=discord.Color.green(),
+            color=discord.Color.blue(),
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # --- /empleo sincronizar ---
     @app_commands.command(
         name="sincronizar",
-        description="Escanea portales y publica en el canal las ofertas detectadas desde el 13 de octubre.",
+        description="Escanea portales y publica en los canales correspondientes ofertas desde el 13 de octubre.",
     )
     @app_commands.describe(
         desde_fecha="Fecha mínima de publicación (formato AAAA-MM-DD o DD-MM, por defecto 2026-10-13)"
@@ -192,23 +233,10 @@ class EmpleoCog(
         prefs = await self.repo.get_or_create_preferences(db_owner.id)
         criteria = criteria_from_db_preferences(prefs)
 
-        channel_id = prefs.notification_channel_id or getattr(
-            self.bot.settings, "discord_channel_id", None
-        )
-        target_channel = None
-        if channel_id:
-            import contextlib
-
-            with contextlib.suppress(Exception):
-                target_channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(
-                    channel_id
-                )
-        if not target_channel and isinstance(interaction.channel, (discord.TextChannel, discord.Thread)):
-            target_channel = interaction.channel
-
         active_sources = self.source_registry.get_active_sources()
         total_encontradas = 0
-        total_subidas = 0
+        total_subidas_it = 0
+        total_subidas_chillan = 0
         total_guardadas = 0
 
         async with aiohttp.ClientSession() as session:
@@ -264,45 +292,70 @@ class EmpleoCog(
 
                         match_result = evaluate_job_match(job_payload, criteria)
 
-                        # Enviar al canal si califica para el perfil
-                        if (
-                            not match_result.is_excluded
-                            and match_result.score >= prefs.min_score_notify
-                            and target_channel
-                        ):
-                            embed = create_job_card_embed(
-                                job_payload,
-                                match_result=match_result,
-                                job_id=saved_job_id or 0,
-                            )
-                            view = JobCardView(
-                                job_id=saved_job_id or 0,
-                                job_url=job_payload.url,
-                                owner_id=interaction.user.id,
-                                application_service=self.app_service,
-                                repository=self.repo,
-                            )
-                            await target_channel.send(embed=embed, view=view)
-                            if saved_job_id:
-                                await self.repo.mark_job_notified(saved_job_id)
-                            total_subidas += 1
-                            await asyncio.sleep(0.5)
+                        # Enrutamiento hacia los canales configurados
+                        dest_channel_id = self.bot.get_destination_channel_id(job_payload)
+                        if dest_channel_id:
+                            import contextlib
+
+                            dest_channel = None
+                            with contextlib.suppress(Exception):
+                                dest_channel = self.bot.get_channel(
+                                    dest_channel_id
+                                ) or await self.bot.fetch_channel(dest_channel_id)
+
+                            if dest_channel and isinstance(
+                                dest_channel, (discord.TextChannel, discord.Thread)
+                            ):
+                                embed = create_job_card_embed(
+                                    job_payload,
+                                    match_result=match_result,
+                                    job_id=saved_job_id or 0,
+                                )
+                                view = JobCardView(
+                                    job_id=saved_job_id or 0,
+                                    job_url=job_payload.url,
+                                    owner_id=interaction.user.id,
+                                    application_service=self.app_service,
+                                    repository=self.repo,
+                                )
+                                await dest_channel.send(embed=embed, view=view)
+                                if saved_job_id:
+                                    await self.repo.mark_job_notified(saved_job_id)
+
+                                it_id = getattr(
+                                    self.bot.settings,
+                                    "discord_channel_informatica_id",
+                                    1561207531659985106,
+                                )
+                                if dest_channel_id == it_id:
+                                    total_subidas_it += 1
+                                else:
+                                    total_subidas_chillan += 1
+                                await asyncio.sleep(0.3)
 
                 except Exception as err:
                     logger.error("Error al sincronizar fuente %s: %s", src.name, err)
+
+        it_id = getattr(
+            self.bot.settings, "discord_channel_informatica_id", 1561207531659985106
+        )
+        chi_id = getattr(
+            self.bot.settings, "discord_channel_chillan_id", 1561217778722283613
+        )
 
         summary_msg = (
             f"✅ **Sincronización completada desde el {cutoff_date.strftime('%d/%m/%Y')}**\n\n"
             f"• **Ofertas analizadas en portales:** {total_encontradas}\n"
             f"• **Nuevas vacantes registradas en base de datos:** {total_guardadas}\n"
-            f"• **Vacantes publicadas en <#{target_channel.id if target_channel else 'MD'}>:** {total_subidas}\n\n"
-            f"🎯 Se priorizaron cargos afines a **Ingeniero en Informática** entre **Concepción y Ñuble**."
+            f"• 💻 **Publicadas en Informática (<#{it_id}>):** {total_subidas_it}\n"
+            f"• 🛍️ **Publicadas en Chillán Otros Empleos (<#{chi_id}>):** {total_subidas_chillan}\n\n"
+            f"🎯 Se respetó la separación estricta de canales y cero mensajes privados."
         )
         await interaction.followup.send(summary_msg)
 
     # --- /empleo estado ---
     @app_commands.command(
-        name="estado", description="Muestra el estado actual del bot y notificaciones."
+        name="estado", description="Muestra el estado actual del bot y canales de alerta."
     )
     @app_commands.check(owner_check)
     async def estado(self, interaction: discord.Interaction) -> None:
@@ -312,17 +365,25 @@ class EmpleoCog(
         app_stats = await self.repo.get_application_stats(db_owner.id)
 
         estado_notif = "⏸️ Pausadas" if prefs.is_paused else "▶️ Activas"
-        canal_id = prefs.notification_channel_id or getattr(
-            self.bot.settings, "discord_channel_id", None
+        inf_id = getattr(
+            self.bot.settings, "discord_channel_informatica_id", 1561207531659985106
         )
-        canal_info = f"<#{canal_id}>" if canal_id else "Mensaje directo (MD privado)"
+        chi_id = getattr(
+            self.bot.settings, "discord_channel_chillan_id", 1561217778722283613
+        )
 
         embed = discord.Embed(
             title="📊 Estado de EmpleoRadar",
             color=discord.Color.green() if not prefs.is_paused else discord.Color.orange(),
         )
         embed.add_field(name="🔔 Notificaciones", value=estado_notif, inline=True)
-        embed.add_field(name="📢 Canal de Alertas", value=canal_info, inline=True)
+        embed.add_field(
+            name="🚫 Mensajes Privados (MD)",
+            value="Desactivados (Todo a canales)",
+            inline=True,
+        )
+        embed.add_field(name="💻 Canal Informática", value=f"<#{inf_id}>", inline=True)
+        embed.add_field(name="🛍️ Canal Chillán Retail/Otros", value=f"<#{chi_id}>", inline=True)
         embed.add_field(
             name="📍 Región Foco", value="Ñuble y Biobío (Chillán y Concepción)", inline=True
         )
@@ -439,9 +500,10 @@ class EmpleoCog(
     @app_commands.describe(oferta_id="ID de la oferta")
     @app_commands.check(owner_check)
     async def ver(self, interaction: discord.Interaction, oferta_id: int) -> None:
+        await interaction.response.defer(ephemeral=True)
         job = await self.repo.get_job(oferta_id)
         if not job:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"❌ La oferta con ID #{oferta_id} no existe.", ephemeral=True
             )
             return
@@ -470,7 +532,7 @@ class EmpleoCog(
             application_service=self.app_service,
             repository=self.repo,
         )
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     # --- /empleo fuentes ---
     @app_commands.command(

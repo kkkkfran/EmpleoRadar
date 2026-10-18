@@ -61,3 +61,4 @@ def test_parse_html_job_items() -> None:
     assert job2.region == "Ñuble"
     assert job2.external_id == "3914561"
     assert job2.published_at == datetime(2026, 10, 14, 12, 0, 0)
+

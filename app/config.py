@@ -19,7 +19,15 @@ class Settings(BaseSettings):
     discord_owner_id: int = Field(..., description="ID del propietario del bot")
     discord_guild_id: int | None = Field(default=None, description="ID del servidor de Discord")
     discord_channel_id: int | None = Field(
-        default=None, description="ID del canal de Discord para alertas de empleo"
+        default=None, description="ID del canal de Discord para alertas de empleo generales"
+    )
+    discord_channel_informatica_id: int = Field(
+        default=1561207531659985106,
+        description="ID del canal de Discord para empleos de Informática",
+    )
+    discord_channel_chillan_id: int = Field(
+        default=1561217778722283613,
+        description="ID del canal de Discord para otros empleos en Chillán (retail, operarios, tiendas)",
     )
 
     # Database
@@ -70,11 +78,21 @@ class Settings(BaseSettings):
             p = self.base_dir / p
         return p
 
-    @field_validator("discord_guild_id", "discord_channel_id", mode="before")
+    @field_validator(
+        "discord_guild_id",
+        "discord_channel_id",
+        "discord_channel_informatica_id",
+        "discord_channel_chillan_id",
+        mode="before",
+    )
     @classmethod
     def validate_optional_guild_id(cls, v: Any, info: Any) -> int | None:
+        defaults = {
+            "discord_channel_informatica_id": 1561207531659985106,
+            "discord_channel_chillan_id": 1561217778722283613,
+        }
         if v is None or v == "" or (isinstance(v, str) and not v.strip()):
-            return None
+            return defaults.get(info.field_name)
         try:
             return int(v)
         except (ValueError, TypeError) as exc:
