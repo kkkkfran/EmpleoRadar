@@ -79,21 +79,26 @@ class EmpleoRadarBot(commands.Bot):
         )
         await self.change_presence(activity=activity)
 
+    async def get_notification_channel_id(self) -> int | None:
+        """Determina el ID del canal configurado para alertas."""
+        try:
+            db_owner = await self.repo.get_owner(self.owner_id)
+            if db_owner:
+                prefs = await self.repo.get_or_create_preferences(db_owner.id)
+                if prefs.notification_channel_id:
+                    return prefs.notification_channel_id
+        except Exception as e:
+            logger.debug("Error consultando preferences en BD: %s", e)
+        return self.settings.discord_channel_id
+
     async def notify_new_job(
         self,
         job: JobPayload,
         match_result: JobMatchResult,
         job_id: int,
     ) -> None:
-        """Envía una notificación privada de nueva vacante al propietario por mensaje directo."""
+        """Envía una notificación de nueva vacante al canal configurado o por mensaje directo."""
         try:
-            owner = await self.fetch_user(self.owner_id)
-            if not owner:
-                logger.warning(
-                    "No se pudo obtener el usuario propietario con ID %s.", self.owner_id
-                )
-                return
-
             embed = create_job_card_embed(job, match_result=match_result, job_id=job_id)
             view = JobCardView(
                 job_id=job_id,
@@ -103,19 +108,48 @@ class EmpleoRadarBot(commands.Bot):
                 repository=self.repo,
             )
 
-            dm_channel = owner.dm_channel or await owner.create_dm()
-            await dm_channel.send(
-                content="🔔 **¡Nueva vacante relevante detectada para tu perfil!**",
-                embed=embed,
-                view=view,
-            )
-            logger.info(
-                "Notificación enviada al propietario para oferta #%d: %s", job_id, job.title
-            )
+            channel_id = await self.get_notification_channel_id()
+            target_channel = None
+
+            if channel_id:
+                try:
+                    target_channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
+                except Exception as ex:
+                    logger.warning("No se pudo obtener el canal de alertas #%s: %s", channel_id, ex)
+
+            if target_channel and isinstance(
+                target_channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)
+            ):
+                await target_channel.send(
+                    content="🔔 **¡Nueva vacante relevante detectada!**",
+                    embed=embed,
+                    view=view,
+                )
+                logger.info(
+                    "Notificación enviada al canal #%s (%s) para oferta #%d: %s",
+                    getattr(target_channel, "name", "canal"),
+                    channel_id,
+                    job_id,
+                    job.title,
+                )
+            else:
+                # Fallback al mensaje directo con el propietario
+                owner = await self.fetch_user(self.owner_id)
+                if not owner:
+                    logger.warning("No se pudo obtener el usuario propietario con ID %s.", self.owner_id)
+                    return
+
+                dm_channel = owner.dm_channel or await owner.create_dm()
+                await dm_channel.send(
+                    content="🔔 **¡Nueva vacante relevante detectada para tu perfil!**",
+                    embed=embed,
+                    view=view,
+                )
+                logger.info(
+                    "Notificación enviada por MD al propietario para oferta #%d: %s", job_id, job.title
+                )
         except Exception as e:
-            logger.error(
-                "Fallo al enviar notificación por MD al propietario (%s): %s", self.owner_id, e
-            )
+            logger.error("Fallo al enviar notificación para oferta #%d: %s", job_id, e)
 
     async def on_tree_error(
         self,

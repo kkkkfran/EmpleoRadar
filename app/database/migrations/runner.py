@@ -110,3 +110,26 @@ async def get_migration_status(db: Database) -> list[dict[str, Any]]:
         )
 
     return status_list
+
+
+# --- Migraciones Registradas ---
+
+
+@register_migration("001", "Esquema inicial de base de datos")
+async def migrate_001(session: AsyncSession) -> None:
+    """Marcador del esquema inicial (tablas creadas por create_all)."""
+    pass
+
+
+@register_migration("002", "Agregar columna notification_channel_id a candidate_preferences")
+async def migrate_002(session: AsyncSession) -> None:
+    """Agrega notification_channel_id a candidate_preferences si la tabla ya existía."""
+    import contextlib
+
+    from sqlalchemy import text
+
+    with contextlib.suppress(Exception):
+        await session.execute(
+            text("ALTER TABLE candidate_preferences ADD COLUMN notification_channel_id INTEGER")
+        )
+

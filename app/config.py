@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     discord_bot_token: str = Field(..., description="Token del bot de Discord")
     discord_owner_id: int = Field(..., description="ID del propietario del bot")
     discord_guild_id: int | None = Field(default=None, description="ID del servidor de Discord")
+    discord_channel_id: int | None = Field(
+        default=None, description="ID del canal de Discord para alertas de empleo"
+    )
 
     # Database
     database_url: str = Field(
@@ -67,15 +70,16 @@ class Settings(BaseSettings):
             p = self.base_dir / p
         return p
 
-    @field_validator("discord_guild_id", mode="before")
+    @field_validator("discord_guild_id", "discord_channel_id", mode="before")
     @classmethod
-    def validate_optional_guild_id(cls, v: Any) -> int | None:
+    def validate_optional_guild_id(cls, v: Any, info: Any) -> int | None:
         if v is None or v == "" or (isinstance(v, str) and not v.strip()):
             return None
         try:
             return int(v)
         except (ValueError, TypeError) as exc:
-            raise ValueError(f"DISCORD_GUILD_ID debe ser un número entero válido (recibido: {v!r})") from exc
+            field_name = info.field_name.upper()
+            raise ValueError(f"{field_name} debe ser un número entero válido (recibido: {v!r})") from exc
 
     @field_validator("discord_owner_id", mode="before")
     @classmethod

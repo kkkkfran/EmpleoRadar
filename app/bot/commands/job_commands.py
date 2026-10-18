@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from datetime import datetime
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -97,16 +100,205 @@ class EmpleoCog(
             inline=False,
         )
         embed.add_field(
-            name="⚙️ Configuración y Salud",
+            name="⚙️ Configuración y Alertas",
             value=(
+                "• `/empleo canal [canal]` - Elige el canal de Discord para recibir alertas.\n"
+                "• `/empleo sincronizar [desde_fecha]` - Escanea y publica vacantes desde el 13 de octubre.\n"
                 "• `/empleo fuentes` - Lista el estado operativo de los portales de empleo.\n"
-                "• `/empleo estado` - Resumen rápido de actividad.\n"
+                "• `/empleo estado` - Resumen rápido de actividad y canal activo.\n"
                 "• `/empleo salud` - Diagnóstico de base de datos, memoria y conexiones.\n"
                 "• `/empleo pausa` / `/empleo reanudar` - Pausar o reactivar notificaciones."
             ),
             inline=False,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # --- /empleo canal ---
+    @app_commands.command(
+        name="canal",
+        description="Configura el canal de Discord donde se publicarán las alertas de nuevas vacantes.",
+    )
+    @app_commands.describe(
+        canal="Canal de texto a asignar (si no se especifica, se utiliza el canal actual)"
+    )
+    @app_commands.check(owner_check)
+    async def configurar_canal(
+        self,
+        interaction: discord.Interaction,
+        canal: discord.TextChannel | None = None,
+    ) -> None:
+        target_channel = canal or interaction.channel
+        if not isinstance(target_channel, (discord.TextChannel, discord.Thread)):
+            await interaction.response.send_message(
+                "❌ Debes seleccionar o ejecutar este comando dentro de un canal de texto válido.",
+                ephemeral=True,
+            )
+            return
+
+        db_owner = await self.repo.get_or_create_owner(interaction.user.id)
+        await self.repo.update_preferences(
+            owner_id=db_owner.id,
+            notification_channel_id=target_channel.id,
+        )
+
+        embed = discord.Embed(
+            title="📢 Canal de Alertas Configurado Exitosamente",
+            description=(
+                f"A partir de ahora, todas las nuevas vacantes relevantes se publicarán automáticamente en **<#{target_channel.id}>**.\n\n"
+                "🎯 **Perfil prioritario configurado:**\n"
+                "• **Cargo:** Ingeniero en Informática / Sistemas / Desarrollo / TI\n"
+                "• **Zona de búsqueda:** Entre Concepción y Región de Ñuble (más vacantes remotas)\n"
+                "• **Comunas destacadas:** Chillán, Chillán Viejo, San Carlos, Concepción, Talcahuano, San Pedro de la Paz, etc.\n\n"
+                "💡 Puedes usar `/empleo sincronizar` para publicar de inmediato las vacantes detectadas desde el 13 de octubre."
+            ),
+            color=discord.Color.green(),
+        )
+        await interaction.response.send_message(embed=embed)
+
+    # --- /empleo sincronizar ---
+    @app_commands.command(
+        name="sincronizar",
+        description="Escanea portales y publica en el canal las ofertas detectadas desde el 13 de octubre.",
+    )
+    @app_commands.describe(
+        desde_fecha="Fecha mínima de publicación (formato AAAA-MM-DD o DD-MM, por defecto 2026-10-13)"
+    )
+    @app_commands.check(owner_check)
+    async def sincronizar(
+        self,
+        interaction: discord.Interaction,
+        desde_fecha: str | None = "2026-10-13",
+    ) -> None:
+        await interaction.response.defer(thinking=True)
+
+        cutoff_date = datetime(2026, 10, 13)
+        if desde_fecha and desde_fecha.strip():
+            txt = desde_fecha.strip()
+            try:
+                if len(txt) == 10 and "-" in txt:
+                    parts = [int(p) for p in txt.split("-")]
+                    cutoff_date = datetime(parts[0], parts[1], parts[2])
+                elif len(txt) == 10 and "/" in txt:
+                    parts = [int(p) for p in txt.split("/")]
+                    cutoff_date = datetime(parts[2], parts[1], parts[0])
+                elif len(txt) == 5 and ("-" in txt or "/" in txt):
+                    sep = "-" if "-" in txt else "/"
+                    parts = [int(p) for p in txt.split(sep)]
+                    cutoff_date = datetime(2026, parts[1], parts[0])
+            except Exception:
+                cutoff_date = datetime(2026, 10, 13)
+
+        db_owner = await self.repo.get_or_create_owner(interaction.user.id)
+        prefs = await self.repo.get_or_create_preferences(db_owner.id)
+        criteria = criteria_from_db_preferences(prefs)
+
+        channel_id = prefs.notification_channel_id or getattr(
+            self.bot.settings, "discord_channel_id", None
+        )
+        target_channel = None
+        if channel_id:
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                target_channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(
+                    channel_id
+                )
+        if not target_channel and isinstance(interaction.channel, (discord.TextChannel, discord.Thread)):
+            target_channel = interaction.channel
+
+        active_sources = self.source_registry.get_active_sources()
+        total_encontradas = 0
+        total_subidas = 0
+        total_guardadas = 0
+
+        async with aiohttp.ClientSession() as session:
+            for src in active_sources:
+                try:
+                    raw_jobs = await src.fetch_jobs(session, criteria)
+                    total_encontradas += len(raw_jobs)
+                    db_source = await self.repo.get_or_create_source(src.name)
+
+                    for job_payload in raw_jobs:
+                        pub_date = job_payload.published_at or datetime.now()
+                        if pub_date < cutoff_date:
+                            continue
+
+                        if not job_payload.dedup_hash:
+                            from app.jobs.deduplication import compute_job_fingerprint
+
+                            compute_job_fingerprint(job_payload)
+
+                        exists = await self.repo.job_exists_by_hash(job_payload.dedup_hash)
+                        if exists:
+                            existing_job = await self.repo.job_exists_by_source_and_external_id(
+                                db_source.id, str(job_payload.external_id)
+                            )
+                            saved_job_id = existing_job.id if existing_job else None
+                        else:
+                            saved_job = await self.repo.add_job(
+                                source_id=db_source.id,
+                                external_id=job_payload.external_id,
+                                title=job_payload.title,
+                                company=job_payload.company,
+                                description=job_payload.description,
+                                location=job_payload.location_raw,
+                                region=job_payload.region,
+                                comuna=job_payload.comuna,
+                                modality=job_payload.modality.value,
+                                contract_type=job_payload.contract_type.value,
+                                schedule=job_payload.schedule.value,
+                                salary_min=job_payload.salary_min,
+                                salary_max=job_payload.salary_max,
+                                salary_type=job_payload.salary_type,
+                                requirements=job_payload.requirements,
+                                experience_required=job_payload.experience_required,
+                                education_required=job_payload.education_required,
+                                url=job_payload.url,
+                                published_at=job_payload.published_at,
+                                is_internship=job_payload.is_internship,
+                                dedup_hash=job_payload.dedup_hash,
+                                raw_data=str(job_payload.raw_data or {}),
+                            )
+                            saved_job_id = saved_job.id
+                            total_guardadas += 1
+
+                        match_result = evaluate_job_match(job_payload, criteria)
+
+                        # Enviar al canal si califica para el perfil
+                        if (
+                            not match_result.is_excluded
+                            and match_result.score >= prefs.min_score_notify
+                            and target_channel
+                        ):
+                            embed = create_job_card_embed(
+                                job_payload,
+                                match_result=match_result,
+                                job_id=saved_job_id or 0,
+                            )
+                            view = JobCardView(
+                                job_id=saved_job_id or 0,
+                                job_url=job_payload.url,
+                                owner_id=interaction.user.id,
+                                application_service=self.app_service,
+                                repository=self.repo,
+                            )
+                            await target_channel.send(embed=embed, view=view)
+                            if saved_job_id:
+                                await self.repo.mark_job_notified(saved_job_id)
+                            total_subidas += 1
+                            await asyncio.sleep(0.5)
+
+                except Exception as err:
+                    logger.error("Error al sincronizar fuente %s: %s", src.name, err)
+
+        summary_msg = (
+            f"✅ **Sincronización completada desde el {cutoff_date.strftime('%d/%m/%Y')}**\n\n"
+            f"• **Ofertas analizadas en portales:** {total_encontradas}\n"
+            f"• **Nuevas vacantes registradas en base de datos:** {total_guardadas}\n"
+            f"• **Vacantes publicadas en <#{target_channel.id if target_channel else 'MD'}>:** {total_subidas}\n\n"
+            f"🎯 Se priorizaron cargos afines a **Ingeniero en Informática** entre **Concepción y Ñuble**."
+        )
+        await interaction.followup.send(summary_msg)
 
     # --- /empleo estado ---
     @app_commands.command(
@@ -120,12 +312,20 @@ class EmpleoCog(
         app_stats = await self.repo.get_application_stats(db_owner.id)
 
         estado_notif = "⏸️ Pausadas" if prefs.is_paused else "▶️ Activas"
+        canal_id = prefs.notification_channel_id or getattr(
+            self.bot.settings, "discord_channel_id", None
+        )
+        canal_info = f"<#{canal_id}>" if canal_id else "Mensaje directo (MD privado)"
+
         embed = discord.Embed(
             title="📊 Estado de EmpleoRadar",
             color=discord.Color.green() if not prefs.is_paused else discord.Color.orange(),
         )
         embed.add_field(name="🔔 Notificaciones", value=estado_notif, inline=True)
-        embed.add_field(name="📍 Región Foco", value="Ñuble (Chillán y comunas)", inline=True)
+        embed.add_field(name="📢 Canal de Alertas", value=canal_info, inline=True)
+        embed.add_field(
+            name="📍 Región Foco", value="Ñuble y Biobío (Chillán y Concepción)", inline=True
+        )
         embed.add_field(
             name="📈 Ofertas en BD", value=f"Total: {stats.get('total', 0)}", inline=True
         )

@@ -200,6 +200,7 @@ class CandidatePreferences(Base):
     weight_contract: Mapped[float] = mapped_column(Float, default=0.05)
     weight_salary: Mapped[float] = mapped_column(Float, default=0.10)
     is_paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    notification_channel_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

@@ -8,10 +8,27 @@ from typing import Any
 from app.jobs.models import JobMatchCriteria
 from app.jobs.regions_data import COMUNAS_PRIORITARIAS_DEFAULT
 
+COMUNAS_BIOBIO_PRIORITARIAS: list[str] = [
+    "Concepción",
+    "Talcahuano",
+    "San Pedro de la Paz",
+    "Chiguayante",
+    "Hualpén",
+    "Coronel",
+    "Penco",
+    "Tomé",
+    "Los Ángeles",
+]
+
+DEFAULT_PRIORITY_COMUNAS: list[str] = COMUNAS_PRIORITARIAS_DEFAULT + COMUNAS_BIOBIO_PRIORITARIAS
+
 DEFAULT_AREAS: list[str] = [
     "Ingeniería en Informática",
-    "Desarrollo backend",
-    "Desarrollo full stack",
+    "Ingeniero en Informática",
+    "Ingeniero Civil en Informática",
+    "Desarrollo de Software",
+    "Desarrollador backend",
+    "Desarrollador full stack",
     "Desarrollo web",
     "Python",
     "JavaScript y TypeScript",
@@ -29,32 +46,44 @@ DEFAULT_AREAS: list[str] = [
     "Ciberseguridad",
 ]
 
+DEFAULT_INTEREST_KEYWORDS: list[str] = [
+    "ingeniero en informática",
+    "ingeniería en informática",
+    "ingeniero informático",
+    "ingeniero civil en informática",
+    "informática",
+    "desarrollador",
+    "programador",
+    "software",
+    "sistemas",
+    "python",
+    "javascript",
+    "typescript",
+    "node",
+    "sql",
+    "backend",
+    "full stack",
+    "fullstack",
+    "frontend",
+    "web",
+    "soporte",
+    "redes",
+    "linux",
+    "cloud",
+    "devops",
+    "datos",
+    "qa",
+    "ciberseguridad",
+]
+
 
 def build_default_match_criteria() -> JobMatchCriteria:
-    """Construye los criterios de coincidencia iniciales basados en Ñuble e Informática."""
+    """Construye los criterios de coincidencia iniciales basados en Ñuble, Concepción e Informática."""
     return JobMatchCriteria(
-        preferred_regions=["Ñuble"],
-        priority_comunas=COMUNAS_PRIORITARIAS_DEFAULT,
+        preferred_regions=["Ñuble", "Biobío"],
+        priority_comunas=DEFAULT_PRIORITY_COMUNAS,
         interest_areas=DEFAULT_AREAS,
-        interest_keywords=[
-            "python",
-            "javascript",
-            "typescript",
-            "node",
-            "sql",
-            "backend",
-            "full stack",
-            "web",
-            "soporte",
-            "redes",
-            "linux",
-            "cloud",
-            "devops",
-            "informática",
-            "desarrollador",
-            "programador",
-            "sistemas",
-        ],
+        interest_keywords=DEFAULT_INTEREST_KEYWORDS,
         exclude_internships=True,
         exclude_thesis=True,
         min_salary=None,
@@ -79,13 +108,23 @@ def criteria_from_db_preferences(db_prefs: Any) -> JobMatchCriteria:
         except Exception:
             return default
 
-    regions = parse_json_list(getattr(db_prefs, "preferred_regions", None), ["Ñuble"])
+    regions = parse_json_list(getattr(db_prefs, "preferred_regions", None), ["Ñuble", "Biobío"])
+    # Garantizar que tanto Ñuble como Biobío formen parte de las regiones preferidas
+    if "Biobío" not in regions:
+        regions.append("Biobío")
+    if "Ñuble" not in regions:
+        regions.append("Ñuble")
+
     comunas = parse_json_list(getattr(db_prefs, "preferred_comunas", None), [])
     priority_comunas = parse_json_list(
-        getattr(db_prefs, "priority_comunas", None), COMUNAS_PRIORITARIAS_DEFAULT
+        getattr(db_prefs, "priority_comunas", None), DEFAULT_PRIORITY_COMUNAS
     )
+    for c in DEFAULT_PRIORITY_COMUNAS:
+        if c not in priority_comunas:
+            priority_comunas.append(c)
+
     areas = parse_json_list(getattr(db_prefs, "interest_areas", None), DEFAULT_AREAS)
-    keywords = parse_json_list(getattr(db_prefs, "interest_keywords", None), [])
+    keywords = parse_json_list(getattr(db_prefs, "interest_keywords", None), DEFAULT_INTEREST_KEYWORDS)
 
     return JobMatchCriteria(
         preferred_regions=regions,
