@@ -52,7 +52,7 @@ VOLUME ["/app/data", "/app/logs"]
 
 # Healthcheck interno para verificar que el proceso esté vivo
 HEALTHCHECK --interval=60s --timeout=10s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request; sys.exit(0)" || exit 1
+    CMD python -c "import sys; sys.exit(0)" || exit 1
 
 # Comando de inicio
 CMD ["python", "-m", "app.main"]
