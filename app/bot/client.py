@@ -104,13 +104,15 @@ class EmpleoRadarBot(commands.Bot):
         desc_lower = (job.description or "").lower()
         text = f"{title_lower} {desc_lower}"
 
-        # 1. Filtro estricto para oficios manuales/eléctricos/mecánicos no-IT
+        # 1. Filtro estricto para oficios manuales/minería/eléctricos/mecánicos no-IT
         non_it_trades = [
             "eléctrico", "electrico", "eléctrica", "electrica", "mecánico", "mecanico",
             "electromecánico", "electromecanico", "climatización", "climatizacion",
             "gasfiter", "gasfitería", "gasfiteria", "plomero", "soldador", "albañil",
             "carpintero", "pintor", "maestro mayor", "chofer", "conductor", "guardia",
-            "aseo", "auxiliar de aseo", "manipuladora de alimentos"
+            "aseo", "auxiliar de aseo", "manipuladora de alimentos",
+            "geólogo", "geologo", "geología", "geologia", "minero", "minera",
+            "minería", "mineria", "metalúrgico", "metalurgico", "sondaje", "perforista", "topógrafo", "topografo"
         ]
         strict_it_in_title = [
             "informática", "informático", "informatico", "software", "desarrollador",
@@ -126,23 +128,49 @@ class EmpleoRadarBot(commands.Bot):
         )
 
         # 2. ¿Es oferta de Informática / Tecnología? -> Canal de Informática
-        it_keywords = [
+        it_title_keywords = [
             "informática", "informatico", "informático", "computación", "computacional",
-            "desarrollo", "desarrollador", "software", "programador", "programación",
-            "backend", "frontend", "full stack", "fullstack", "web", "devops",
-            "python", "java", "javascript", "typescript", "c#", ".net", "php", "golang",
-            "sql", "base de datos", "bases de datos", "database", "redes", "networking",
-            "telecomunicaciones", "soporte ti", "soporte técnico", "soporte computacional",
-            "sistemas informáticos", "sistemas y computación", "ingeniero de sistemas",
-            "ingeniería de sistemas", "analista de sistemas", "administrador de sistemas",
-            "infraestructura", "cloud", "aws", "azure", "ciberseguridad", "seguridad informática",
-            "qa", "testing", "ciencia de datos", "data science", "data engineer", "data analytics",
-            "analista de datos", "tecnología", "tecnologias", "tecnologías"
+            "desarrollador", "desarrollo de software", "desarrollo web", "desarrollo backend",
+            "desarrollo frontend", "desarrollo full stack", "desarrollo fullstack",
+            "software", "programador", "programación", "backend", "frontend",
+            "full stack", "fullstack", "web developer", "devops", "cloud", "ciberseguridad",
+            "seguridad informática", "qa", "qa automation", "tester", "testing",
+            "data engineer", "data scientist", "data analytics", "analista de datos",
+            "ciencia de datos", "soporte ti", "soporte técnico ti", "soporte computacional",
+            "administrador de sistemas", "ingeniero de sistemas", "ingeniería de sistemas",
+            "analista de sistemas", "sistemas informáticos", "arquitecto de software",
+            "dba", "administrador de base de datos", "redes y telecomunicaciones"
         ]
 
-        if (not is_non_it_trade or has_strict_it_title) and any(
-            re.search(r"\b" + re.escape(kw) + r"\b", text) for kw in it_keywords
-        ):
+        it_tech_stack = [
+            "python", "javascript", "typescript", "react", "angular", "vue", "node", "nodejs",
+            "django", "fastapi", "flask", "springboot", "spring boot", "laravel",
+            "docker", "kubernetes", "aws", "azure", "gcp", "linux", "sql server",
+            "postgresql", "mongodb", "mysql", "api rest", "microservicios", "git"
+        ]
+
+        is_it_job = False
+        if not is_non_it_trade or has_strict_it_title:
+            # Coincidencia directa en título con término de TI
+            if any(re.search(r"\b" + re.escape(kw) + r"\b", title_lower) for kw in it_title_keywords):
+                is_it_job = True
+            # O presencia de tecnologías específicas en el texto si el título no es de otro rubro
+            elif any(re.search(r"\b" + re.escape(st) + r"\b", text) for st in it_tech_stack):
+                tech_title_hints = [
+                    "ingeniero", "analista", "consultor", "especialista", "técnico", "tecnico", "lead", "developer"
+                ]
+                if any(re.search(r"\b" + re.escape(h) + r"\b", title_lower) for h in tech_title_hints):
+                    is_it_job = True
+
+        if is_it_job:
+            # Comprobar ubicación: Debe ser entre Concepción y Ñuble, o Remoto/Híbrido/Chile nacional
+            loc_combined = f"{job.region or ''} {job.comuna or ''} {job.location_raw or ''}".lower()
+            excluded_distant_regions = [
+                "antofagasta", "calama", "tarapacá", "iquique", "arica", "atacama",
+                "copiapó", "coquimbo", "la serena", "magallanes", "punta arenas", "aysén", "coyhaique"
+            ]
+            if job.modality.value == "presencial" and any(dr in loc_combined for dr in excluded_distant_regions):
+                return None
             return self.settings.discord_channel_informatica_id
 
         # 3. ¿Es oferta dentro de Chillán? (Retail, tiendas, ropa, reponedor, bodega, etc.)

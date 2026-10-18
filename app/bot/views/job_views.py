@@ -182,8 +182,9 @@ class JobCardLayoutView(ui.LayoutView):
         # Compatibilidad con perfil
         score_emoji = "🎯" if match_result.score >= 50 else "⚡"
         details_lines.append(f"{score_emoji} **Compatibilidad:** `{match_result.score}/100`")
-        if match_result.reasons:
-            details_lines.append(f"💡 *{match_result.reasons[0]}*")
+        reasons = getattr(match_result, "match_reasons", []) or getattr(match_result, "reasons", [])
+        if reasons:
+            details_lines.append(f"💡 *{reasons[0]}*")
 
         # Breve extracto de descripción si está disponible
         if job.description:
