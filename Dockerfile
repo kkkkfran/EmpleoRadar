@@ -47,8 +47,7 @@ RUN mkdir -p /app/data/private/resumes /app/data/backups /app/logs && \
 # Cambiar al usuario no privilegiado
 USER empleoradar
 
-# Volúmenes para persistencia de base de datos SQLite, CVs privados y logs
-VOLUME ["/app/data", "/app/logs"]
+# Persistencia: usar Railway Volumes montado en /app/data (no se soporta la instrucción VOLUME)
 
 # Healthcheck interno para verificar que el proceso esté vivo
 HEALTHCHECK --interval=60s --timeout=10s --start-period=20s --retries=3 \
