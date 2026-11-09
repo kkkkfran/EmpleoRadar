@@ -81,6 +81,27 @@ async def test_jobs_deduplication_and_search(test_db):
 
 
 @pytest.mark.asyncio
+async def test_semantic_duplicate_across_sources(test_db):
+    repo = Repository(test_db)
+    source = await repo.get_or_create_source(name="ChileTrabajos")
+    original = await repo.add_job(
+        source_id=source.id,
+        title="Vendedor/a PT 30 hrs Temporada Navidad…",
+        company="Forus",
+        comuna="Chillán",
+        url="https://example.com/one",
+        dedup_hash="semantic_original",
+    )
+    duplicate = await repo.find_semantic_duplicate(
+        "Vendedor/a PT 30 hrs Temporada Navidad Chillán",
+        "Chillán",
+        "FORUS SA",
+    )
+    assert duplicate is not None
+    assert duplicate.id == original.id
+
+
+@pytest.mark.asyncio
 async def test_applications_lifecycle(test_db):
     repo = Repository(test_db)
     owner = await repo.get_or_create_owner(discord_id=123456789)

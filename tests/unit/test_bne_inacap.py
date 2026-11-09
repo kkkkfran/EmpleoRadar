@@ -9,6 +9,7 @@ from app.sources.inacap import InacapSource
 def test_parse_bne_item() -> None:
     source = BNESource()
     raw_item = {
+        "id": 1597574,
         "codigo": "BNE-9988",
         "titulo": "Desarrollador Full Stack Python",
         "empresa": "Tech Chile SpA",
@@ -23,7 +24,7 @@ def test_parse_bne_item() -> None:
     assert payload.company == "Tech Chile SpA"
     assert payload.comuna == "Chillán"
     assert payload.region == "Ñuble"
-    assert payload.url == "https://www.bne.cl/oferta/BNE-9988"
+    assert payload.url == "https://bne.gob.cl/ofertas/1597574"
     assert payload.external_id == "BNE-9988"
     assert payload.published_at == datetime(2026, 10, 17, 0, 0)
     assert payload.dedup_hash is not None
@@ -49,3 +50,36 @@ def test_parse_inacap_jsonld_item() -> None:
     assert payload.published_at == datetime(2026, 10, 16, 0, 0)
     assert payload.dedup_hash is not None
 
+
+
+def test_bne_never_builds_detail_link_from_public_code():
+    assert BNESource()._parse_bne_item({"codigo": "2026-133376", "titulo": "Developer"}) is None
+
+
+async def test_bne_failed_requests_are_not_reported_as_success():
+    from unittest.mock import AsyncMock
+
+    import pytest
+
+    from app.sources.base import SourceError
+    source = BNESource()
+    source.request_search_post = AsyncMock(side_effect=SourceError("HTTP 404"))
+    with pytest.raises(SourceError):
+        await source.fetch_jobs(None)
+    assert source.consecutive_errors == 1
+    assert source.last_success_at is None
+
+
+def test_inacap_detail_without_schema_url_uses_requested_url():
+    import json
+    source = InacapSource()
+    html = '<script type="application/ld+json">' + json.dumps({
+        "@type": "JobPosting", "title": "Ayudante de cocina",
+        "datePosted": "2026-11-06", "description": "Enseñanza media",
+        "jobLocation": {"address": "Chillán"},
+    }) + '</script>'
+    jobs = source._parse_inacap_page(html, detail_url="https://empleaxchile.cl/jobs/123")
+    assert len(jobs) == 1
+    assert jobs[0].published_at == datetime(2026, 11, 6)
+    assert jobs[0].comuna == "Chillán"
+    assert jobs[0].url == "https://empleaxchile.cl/jobs/123"

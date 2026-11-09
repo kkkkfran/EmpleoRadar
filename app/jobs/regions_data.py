@@ -35,11 +35,6 @@ COMUNAS_NUBLE: list[str] = [
 COMUNAS_PRIORITARIAS_DEFAULT: list[str] = [
     "Chillán",
     "Chillán Viejo",
-    "San Carlos",
-    "Coihueco",
-    "Bulnes",
-    "Quirihue",
-    "Yungay",
 ]
 
 # Mapa completo de Regiones de Chile y sus Comunas
@@ -409,9 +404,6 @@ _SYNONYMS: dict[str, tuple[str, str]] = {
     "chillan": ("Chillán", "Ñuble"),
     "chillan viejo": ("Chillán Viejo", "Ñuble"),
     "san carlos": ("San Carlos", "Ñuble"),
-    "nuble": ("Chillán", "Ñuble"),
-    "region de nuble": ("Chillán", "Ñuble"),
-    "region del nuble": ("Chillán", "Ñuble"),
     "stgo": ("Santiago", "Metropolitana de Santiago"),
     "santiago centro": ("Santiago", "Metropolitana de Santiago"),
     "region metropolitana": ("Santiago", "Metropolitana de Santiago"),

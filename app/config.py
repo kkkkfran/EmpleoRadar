@@ -12,10 +12,13 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Configuración del bot cargada desde variables de entorno."""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = {
+        "env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore",
+        "hide_input_in_errors": True,
+    }
 
     # Discord
-    discord_bot_token: str = Field(..., description="Token del bot de Discord")
+    discord_bot_token: str = Field(..., repr=False, description="Token del bot de Discord")
     discord_owner_id: int = Field(..., description="ID del propietario del bot")
     discord_guild_id: int | None = Field(default=None, description="ID del servidor de Discord")
     discord_channel_id: int | None = Field(
@@ -43,9 +46,12 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
 
     # Job sources
-    poll_interval_minutes: int = Field(default=15, ge=1, le=1440)
+    poll_interval_minutes: int = Field(default=2, ge=1, le=1440)
     max_concurrent_requests: int = Field(default=3, ge=1, le=10)
     request_timeout_seconds: int = Field(default=30, ge=5, le=120)
+    source_timeout_seconds: int = Field(default=180, ge=10, le=600)
+    recovery_days: int = Field(default=4, ge=1, le=30)
+    port: int = Field(default=8080, ge=1, le=65535)
 
     # CV Storage
     cv_storage_dir: str = Field(default="data/private/resumes")
@@ -122,14 +128,20 @@ class Settings(BaseSettings):
             )
         return str(v).strip()
 
-    @field_validator("poll_interval_minutes", "max_concurrent_requests", "request_timeout_seconds", mode="before")
+    @field_validator(
+        "poll_interval_minutes", "max_concurrent_requests", "request_timeout_seconds",
+        "source_timeout_seconds", "recovery_days", "port", mode="before",
+    )
     @classmethod
     def validate_optional_numeric(cls, v: Any, info: Any) -> Any:
         if v is None or (isinstance(v, str) and not v.strip()):
             defaults = {
-                "poll_interval_minutes": 15,
+                "poll_interval_minutes": 2,
                 "max_concurrent_requests": 3,
                 "request_timeout_seconds": 30,
+                "source_timeout_seconds": 180,
+                "recovery_days": 4,
+                "port": 8080,
             }
             return defaults.get(info.field_name, v)
         return v

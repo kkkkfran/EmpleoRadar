@@ -27,6 +27,8 @@ def test_is_internship_detection():
     assert is_internship_offer("Pasantía en desarrollo web") is True
     assert is_internship_offer("Ingeniero de Software Senior") is False
     assert is_internship_offer("Desarrollador Backend Junior") is False
+    assert is_internship_offer("Pr�ctica Ingeniería en Informática") is True
+    assert is_internship_offer("Pr ctica profesional TI") is True
 
 
 def test_detect_modality():
@@ -97,3 +99,27 @@ def test_normalize_job_payload_full():
     assert payload.salary_min == 1_200_000
     assert payload.salary_type == "liquido"
     assert payload.is_internship is False
+
+
+def test_normalizer_prefers_workplace_over_headquarters_mentions():
+    raw = {
+        "title": "Bodeguero",
+        "location": "Ninhue, Ñuble",
+        "description": "Empresa con sede central en Chillán requiere personal para Ninhue.",
+        "url": "https://ejemplo.cl/oferta/local",
+    }
+    assert normalize_job_payload(raw, "test").comuna == "Ninhue"
+    raw["comuna"] = "Chillán Viejo"
+    assert normalize_job_payload(raw, "test").comuna == "Chillán Viejo"
+
+
+def test_normalizer_does_not_invent_comuna_from_region_or_description():
+    raw = {
+        "title": "Bodeguero",
+        "location": "Ñuble",
+        "description": "Enviar antecedentes a oficina central de Chillán.",
+        "url": "https://ejemplo.cl/oferta/region",
+    }
+    payload = normalize_job_payload(raw, "test")
+    assert payload.comuna is None
+    assert payload.region == "Ñuble"

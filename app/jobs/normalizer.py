@@ -14,6 +14,10 @@ from app.jobs.regions_data import find_comuna_and_region
 
 # Patrones de exclusión de prácticas y memorias (evaluados sobre texto sin tildes)
 _INTERNSHIP_PATTERNS = [
+    # Variantes tolerantes a texto mal decodificado: "Pr�ctica" termina como
+    # "pr ctica" tras normalizar y antes lograba evadir el filtro.
+    re.compile(r"\bpr\W*ctica\b", re.IGNORECASE),
+    re.compile(r"\bpracticante\b", re.IGNORECASE),
     re.compile(r"\bpractica\s+profesional\b", re.IGNORECASE),
     re.compile(r"\balumno\s+en\s+practica\b", re.IGNORECASE),
     re.compile(r"\bestudiante\s+en\s+practica\b", re.IGNORECASE),
@@ -246,12 +250,14 @@ def normalize_job_payload(
     if raw.get("is_internship") is True:
         is_internship = True
 
-    # Detección de ubicación
-    comuna, region = find_comuna_and_region(f"{raw_location} {raw_title} {raw_desc[:200]}")
-    if not region and raw.get("region"):
-        region = str(raw.get("region"))
-    if not comuna and raw.get("comuna"):
-        comuna = str(raw.get("comuna"))
+    # La ubicación declarada prevalece sobre menciones de otras sedes en el texto.
+    explicit_comuna = str(raw.get("comuna") or "").strip()
+    explicit_region = str(raw.get("region") or "").strip()
+    comuna, region = find_comuna_and_region(explicit_comuna or raw_location)
+    comuna = explicit_comuna or comuna
+    region = find_comuna_and_region(explicit_region)[1] or explicit_region or region
+    if not comuna and not raw_location and not explicit_region:
+        comuna, region = find_comuna_and_region(raw_title)
 
     # Modalidad
     modality = detect_modality(raw_title, raw_desc, raw.get("modality"))

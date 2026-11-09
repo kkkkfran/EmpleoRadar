@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
+from difflib import SequenceMatcher
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
 
 from app.database.models import (
     Application,
@@ -346,9 +348,48 @@ class Repository:
         """Obtiene una oferta existente por su hash de deduplicación."""
         async with self._db.session() as session:
             result = await session.execute(
-                select(Job).where(Job.dedup_hash == dedup_hash)
+                select(Job).where(Job.dedup_hash == dedup_hash).order_by(Job.id.asc()).limit(1)
             )
-            return result.scalar_one_or_none()
+            return result.scalars().first()
+
+    async def find_semantic_duplicate(
+        self,
+        title: str,
+        comuna: str | None,
+        company: str | None,
+    ) -> Job | None:
+        """Detecta la misma vacante aunque otro portal cambie levemente título/empresa."""
+        from app.jobs.regions_data import normalize_text_match
+
+        title_norm = normalize_text_match(title)
+        company_norm = normalize_text_match(company or "")
+        title_tokens = set(title_norm.split())
+        if len(title_tokens) < 3:
+            return None
+
+        async with self._db.session() as session:
+            query = select(Job).where(Job.detected_at >= datetime.utcnow() - timedelta(days=14))
+            if comuna:
+                query = query.where(Job.comuna == comuna)
+            result = await session.execute(query.order_by(Job.id.desc()).limit(500))
+            for candidate in result.scalars():
+                candidate_title = normalize_text_match(candidate.title)
+                candidate_tokens = set(candidate_title.split())
+                overlap = len(title_tokens & candidate_tokens) / max(
+                    1, len(title_tokens | candidate_tokens)
+                )
+                similarity = SequenceMatcher(None, title_norm, candidate_title).ratio()
+                candidate_company = normalize_text_match(candidate.company or "")
+                company_matches = (
+                    not company_norm
+                    or not candidate_company
+                    or company_norm in candidate_company
+                    or candidate_company in company_norm
+                    or SequenceMatcher(None, company_norm, candidate_company).ratio() >= 0.75
+                )
+                if company_matches and (overlap >= 0.75 or similarity >= 0.88):
+                    return candidate
+        return None
 
     async def job_exists_by_source_and_external_id(
         self, source_id: int, external_id: str
@@ -356,9 +397,12 @@ class Repository:
         """Busca una oferta existente por fuente e ID externo."""
         async with self._db.session() as session:
             result = await session.execute(
-                select(Job).where(and_(Job.source_id == source_id, Job.external_id == external_id))
+                select(Job)
+                .where(and_(Job.source_id == source_id, Job.external_id == external_id))
+                .order_by(Job.id.asc())
+                .limit(1)
             )
-            return result.scalar_one_or_none()
+            return result.scalars().first()
 
     async def add_job(self, **kwargs) -> Job:
         """Agrega una nueva oferta de empleo."""
@@ -373,7 +417,9 @@ class Repository:
     async def update_job(self, job_id: int, **kwargs) -> Job | None:
         """Actualiza una oferta existente."""
         async with self._db.session() as session:
-            result = await session.execute(select(Job).where(Job.id == job_id))
+            result = await session.execute(
+                select(Job).options(selectinload(Job.source)).where(Job.id == job_id)
+            )
             job = result.scalar_one_or_none()
             if job:
                 changes = []
@@ -467,6 +513,16 @@ class Repository:
             await session.commit()
             return result.rowcount
 
+    async def set_job_decision(self, job_id: int, decision: str) -> None:
+        """Guarda la clasificación personal de una oferta mostrada en Discord."""
+        if decision not in {"pending", "applied", "dismissed"}:
+            raise ValueError("Decisión de oferta no válida")
+        async with self._db.session() as session:
+            await session.execute(
+                update(Job).where(Job.id == job_id).values(user_decision=decision)
+            )
+            await session.commit()
+
     async def clear_all_jobs(self) -> int:
         """Elimina todas las ofertas y registros asociados para un reseteo total."""
         async with self._db.session() as session:
@@ -477,15 +533,60 @@ class Repository:
             await session.commit()
             return result.rowcount
 
-    async def get_unnotified_jobs(self) -> Sequence[Job]:
-        """Obtiene ofertas que aún no han sido notificadas."""
+    async def get_unnotified_jobs(
+        self,
+        since_date: datetime | None = None,
+        *,
+        include_undated: bool = True,
+    ) -> Sequence[Job]:
+        """Obtiene la cola persistente de avisos, incluso si el portal dejó de listarlos."""
         async with self._db.session() as session:
-            result = await session.execute(
+            query = (
                 select(Job)
-                .where(Job.notified == False)  # noqa: E712
-                .order_by(Job.detected_at.asc())
+                .join(JobSource)
+                .options(selectinload(Job.source))
+                .where(
+                    Job.notified.is_(False),
+                    Job.notification_eligible.is_(True),
+                    Job.status == "activa",
+                    Job.user_decision == "pending",
+                    JobSource.is_enabled.is_(True),
+                )
+            )
+            if since_date is not None:
+                dated = Job.published_at >= since_date
+                if include_undated:
+                    query = query.where(or_(
+                        dated,
+                        and_(Job.published_at.is_(None), Job.detected_at >= since_date),
+                    ))
+                else:
+                    query = query.where(dated)
+            elif not include_undated:
+                query = query.where(Job.published_at.is_not(None))
+            result = await session.execute(
+                query.order_by(func.coalesce(Job.published_at, Job.detected_at).asc(), Job.id.asc())
             )
             return result.scalars().all()
+
+    async def recover_legacy_baseline(self, since_date: datetime, until_date: datetime) -> int:
+        """Reabre solo marcas silenciosas recientes sin evidencia de entrega anterior."""
+        notification_exists = select(Notification.id).where(Notification.job_id == Job.id).exists()
+        async with self._db.session() as session:
+            result = await session.execute(
+                update(Job)
+                .where(
+                    Job.notified.is_(True),
+                    Job.notification_message_id.is_(None),
+                    Job.published_at >= since_date,
+                    Job.published_at <= until_date,
+                    Job.user_decision == "pending",
+                    ~notification_exists,
+                )
+                .values(notified=False, notification_eligible=True)
+            )
+            await session.commit()
+            return result.rowcount
 
     async def increment_source_jobs_count(self, source_id: int, count: int = 1) -> None:
         """Incrementa el contador de ofertas encontradas de una fuente."""

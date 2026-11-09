@@ -6,11 +6,15 @@ Región de Ñuble (Chillán) y Región del Biobío (Concepción y comunas aleda�
 
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
 import re
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
+from urllib.parse import urljoin, urlsplit
+from zoneinfo import ZoneInfo
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -18,7 +22,7 @@ from bs4 import BeautifulSoup
 from app.jobs.deduplication import compute_job_fingerprint
 from app.jobs.models import JobPayload
 from app.jobs.normalizer import normalize_job_payload
-from app.sources.base import BaseJobSource
+from app.sources.base import BaseJobSource, SourceError
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +47,7 @@ def parse_chiletrabajos_date(txt: str) -> datetime | None:
     if not txt:
         return None
     clean = txt.lower().strip()
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("America/Santiago")).replace(tzinfo=None)
     if "hoy" in clean:
         return now.replace(hour=12, minute=0, second=0, microsecond=0)
     if "ayer" in clean:
@@ -74,31 +78,13 @@ class ChileTrabajosSource(BaseJobSource):
             max_retries=3,
             rate_limit_delay=1.0,
         )
-        # Endpoints estratégicos: Informática en Concepción (1035), Chillán (1036), Nacional y Búsquedas por Cargo
         self.search_urls = [
-            # 1. Informática en Concepción (Región del Biobío)
-            "https://www.chiletrabajos.cl/encuentra-un-empleo?categoria=2007&13=1035",
-            # 2. Informática en Chillán (Región de Ñuble)
-            "https://www.chiletrabajos.cl/encuentra-un-empleo?categoria=2007&13=1036",
-            # 3. Informática a nivel nacional (incluye vacantes remotas)
-            "https://www.chiletrabajos.cl/encuentra-un-empleo?categoria=2007",
-            # 4. Búsqueda específica por perfil Ingeniero en Informática
-            "https://www.chiletrabajos.cl/encuentra-un-empleo?2=ingeniero+informatica",
-            # 5. Búsqueda específica por perfil Desarrollador
-            "https://www.chiletrabajos.cl/encuentra-un-empleo?2=desarrollador",
-            # 6. Todas las ofertas generales en Chillán
-            "https://www.chiletrabajos.cl/encuentra-un-empleo?13=1036",
-            # 7. Ventas y Comercial en Chillán (tiendas, retail, asistentes)
-            "https://www.chiletrabajos.cl/encuentra-un-empleo?categoria=2027&13=1036",
-            # 8. Operarios y Bodega en Chillán (reponedores, empaque, bodega)
-            "https://www.chiletrabajos.cl/encuentra-un-empleo?categoria=2025&13=1036",
-            # 9. Logística y Distribución en Chillán
-            "https://www.chiletrabajos.cl/encuentra-un-empleo?categoria=2021&13=1036",
-            # 10. Búsqueda de reponedores y retail en Chillán
-            "https://www.chiletrabajos.cl/encuentra-un-empleo?2=reponedor&13=1036",
-            # 11. Todas las ofertas en Concepción
-            "https://www.chiletrabajos.cl/encuentra-un-empleo?13=1035",
+            "https://www.chiletrabajos.cl/encuentra-un-empleo?13=1036&fecha=4",
+            "https://www.chiletrabajos.cl/encuentra-un-empleo?2=remoto&fecha=4",
         ]
+        self.recovery_days = 4
+        self.max_pages = 3
+        self._detail_cache: dict[str, JobPayload] = {}
 
     async def fetch_jobs(
         self,
@@ -109,31 +95,80 @@ class ChileTrabajosSource(BaseJobSource):
         all_jobs: list[JobPayload] = []
         seen_urls: set[str] = set()
 
-        for url in self.search_urls:
+        errors: list[str] = []
+        successful = 0
+        cutoff = (datetime.now(ZoneInfo("America/Santiago")) - timedelta(days=self.recovery_days)).date()
+        for initial_url in self.search_urls:
+            url = initial_url
             try:
-                response_text = await self.request_get(session, url)
-                # Intentar parsear como página web con tarjetas job-item
-                jobs = self._parse_html_job_items(response_text)
-                if not jobs:
-                    # Si fuera un feed XML/RSS
-                    jobs = self._parse_rss_feed(response_text)
-
-                for j in jobs:
-                    if j.url not in seen_urls:
-                        seen_urls.add(j.url)
-                        all_jobs.append(j)
-            except Exception as e:
-                logger.warning("[%s] Error consultando %s: %s", self.name, url, e)
-
-        if all_jobs:
-            self.record_success(len(all_jobs))
+                for page in range(self.max_pages):
+                    response_text = await self.request_get(session, url)
+                    jobs = self._parse_html_job_items(response_text)
+                    successful += 1
+                    for job in jobs:
+                        if job.url in seen_urls or not job.published_at or job.published_at.date() < cutoff:
+                            continue
+                        seen_urls.add(job.url)
+                        if job.url in self._detail_cache:
+                            all_jobs.append(self._detail_cache[job.url])
+                            continue
+                        try:
+                            detail = await self.request_get(session, job.url)
+                            enriched = self._parse_detail(detail, job)
+                            if len(self._detail_cache) >= 1000:
+                                self._detail_cache.pop(next(iter(self._detail_cache)))
+                            self._detail_cache[job.url] = enriched
+                            all_jobs.append(enriched)
+                        except Exception as exc:
+                            errors.append(str(exc))
+                    soup = BeautifulSoup(response_text, "html.parser")
+                    next_link = next((a for a in soup.select(".pagination a") if a.get_text(strip=True) in {">", "»", "Siguiente"}), None)
+                    if not next_link:
+                        break
+                    url = urljoin(url, str(next_link.get("href", "")))
+                    if urlsplit(url).hostname != "www.chiletrabajos.cl":
+                        break
+                    if page + 1 == self.max_pages:
+                        logger.warning("ChileTrabajos: limite de paginas alcanzado; consulta parcial")
+            except Exception as exc:
+                errors.append(str(exc))
+                logger.warning("[%s] Error consultando %s: %s", self.name, url, exc)
+        if not successful:
+            error = errors[0] if errors else "No se pudo consultar ChileTrabajos"
+            self.record_error(error)
+            raise SourceError(error)
+        if errors:
+            self.record_error("Consulta parcial: " + errors[0])
         else:
-            if self.last_error:
-                self.record_error("No se pudieron extraer ofertas de ChileTrabajos.")
-            else:
-                self.record_success(0)
-
+            self.record_success(len(all_jobs))
         return all_jobs
+
+    def _parse_detail(self, html_text: str, listing: JobPayload) -> JobPayload:
+        soup = BeautifulSoup(html_text, "html.parser")
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                item = json.loads(script.get_text())
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(item, dict) or item.get("@type") != "JobPosting":
+                continue
+            published = listing.published_at
+            if item.get("datePosted"):
+                with contextlib.suppress(ValueError, TypeError):
+                    published = datetime.fromisoformat(item["datePosted"])
+            raw = {
+                "external_id": listing.external_id, "url": listing.url,
+                "title": item.get("title") or listing.title,
+                "company": (item.get("hiringOrganization") or {}).get("name") or listing.company,
+                "description": item.get("description") or listing.description,
+                "location": listing.location_raw, "published_at": published,
+                "requirements": item.get("qualifications"),
+                "education_required": item.get("educationRequirements"),
+            }
+            result = normalize_job_payload(raw, self.name)
+            compute_job_fingerprint(result)
+            return result
+        raise SourceError("Ficha ChileTrabajos sin JobPosting; no se pueden verificar requisitos")
 
     def _parse_html_job_items(self, html_text: str) -> list[JobPayload]:
         """Parsea las tarjetas HTML de ofertas laborales (.job-item) de ChileTrabajos."""

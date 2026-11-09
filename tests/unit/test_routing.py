@@ -1,6 +1,6 @@
 """Pruebas unitarias para el enrutamiento de canales de EmpleoRadar.
 
-Canal 1 (1561207531659985106): Informática general (Concepción, Ñuble, Remoto, Chile).
+Canal 1 (1561207531659985106): Informática en Chillán/Chillán Viejo o remoto desde Chile.
 Canal 2 (1561217778722283613): Otros empleos en Chillán (Retail, Falabella, Ripley, Jumbo, Paris, sin título universitario).
 """
 
@@ -46,7 +46,7 @@ def test_routing_it_job_concepcion():
         url="https://chiletrabajos.cl/enc/1",
     )
     dest_channel = bot.get_destination_channel_id(job)
-    assert dest_channel == 1561207531659985106
+    assert dest_channel is None
 
 
 def test_routing_it_job_nuble():
@@ -142,8 +142,8 @@ def test_routing_bne_inacap_informatica():
         source_name="BNE",
         title="Desarrollador Python / Backend",
         description="Buscamos desarrollador para proyecto web cloud.",
-        region="Biobío",
-        comuna="Concepción",
+        region="Ñuble",
+        comuna="Chillán Viejo",
         url="https://www.bne.cl/oferta/123",
     )
     dest_channel = bot.get_destination_channel_id(job)

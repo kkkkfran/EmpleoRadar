@@ -290,7 +290,9 @@ class Job(Base):
     dedup_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # SHA-256 dedup fingerprint
     raw_data: Mapped[str | None] = mapped_column(Text)  # JSON original data
     notified: Mapped[bool] = mapped_column(Boolean, default=False)
+    notification_eligible: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     notification_message_id: Mapped[int | None] = mapped_column(Integer)
+    user_decision: Mapped[str] = mapped_column(String(20), default="pending")
 
     source: Mapped[JobSource] = relationship(back_populates="jobs")
     observations: Mapped[list[JobObservation]] = relationship(back_populates="job")

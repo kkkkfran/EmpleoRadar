@@ -9,6 +9,8 @@ from app.sources.base import BaseJobSource
 from app.sources.bne import BNESource
 from app.sources.chiletrabajos import ChileTrabajosSource
 from app.sources.company_sites import CompanySitesSource
+from app.sources.falabella import FalabellaSource
+from app.sources.getonboard import GetOnBoardSource
 from app.sources.inacap import InacapSource
 from app.sources.indeed import IndeedSource
 from app.sources.rss import GenericRSSSource
@@ -33,6 +35,8 @@ class SourceRegistry:
             InacapSource(),
             TrabajandoSource(),
             IndeedSource(),
+            GetOnBoardSource(),
+            FalabellaSource(),
             CompanySitesSource(),
         ]
         for src in sources:
@@ -64,6 +68,7 @@ class SourceRegistry:
                 access_notes=getattr(src, "access_notes", None),
                 status=src.status.value,
             )
+            src.is_enabled = db_source.is_enabled
             # Si en BD fue deshabilitada, reflejar en memoria
             if not db_source.is_enabled:
                 logger.info("Fuente %s deshabilitada por configuración en base de datos.", src.name)
@@ -73,5 +78,5 @@ class SourceRegistry:
         return [
             s
             for s in self._sources.values()
-            if not s.requires_auth and s.source_type in ("rss", "public_web", "public_api")
+            if s.is_enabled and not s.requires_auth and s.source_type in ("rss", "public_web", "public_api")
         ]

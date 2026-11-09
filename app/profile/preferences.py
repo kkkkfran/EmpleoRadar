@@ -8,19 +8,7 @@ from typing import Any
 from app.jobs.models import JobMatchCriteria
 from app.jobs.regions_data import COMUNAS_PRIORITARIAS_DEFAULT
 
-COMUNAS_BIOBIO_PRIORITARIAS: list[str] = [
-    "Concepción",
-    "Talcahuano",
-    "San Pedro de la Paz",
-    "Chiguayante",
-    "Hualpén",
-    "Coronel",
-    "Penco",
-    "Tomé",
-    "Los Ángeles",
-]
-
-DEFAULT_PRIORITY_COMUNAS: list[str] = COMUNAS_PRIORITARIAS_DEFAULT + COMUNAS_BIOBIO_PRIORITARIAS
+DEFAULT_PRIORITY_COMUNAS: list[str] = list(COMUNAS_PRIORITARIAS_DEFAULT)
 
 DEFAULT_AREAS: list[str] = [
     "Ingeniería en Informática",
@@ -78,9 +66,10 @@ DEFAULT_INTEREST_KEYWORDS: list[str] = [
 
 
 def build_default_match_criteria() -> JobMatchCriteria:
-    """Construye los criterios de coincidencia iniciales basados en Ñuble, Concepción e Informática."""
+    """Construye las preferencias iniciales para Chillán, Chillán Viejo e Informática."""
     return JobMatchCriteria(
-        preferred_regions=["Ñuble", "Biobío"],
+        preferred_regions=["Ñuble"],
+        preferred_comunas=DEFAULT_PRIORITY_COMUNAS,
         priority_comunas=DEFAULT_PRIORITY_COMUNAS,
         interest_areas=DEFAULT_AREAS,
         interest_keywords=DEFAULT_INTEREST_KEYWORDS,
@@ -102,27 +91,18 @@ def criteria_from_db_preferences(db_prefs: Any) -> JobMatchCriteria:
 
     def parse_json_list(val: str | None, default: list) -> list:
         if not val:
-            return default
+            return list(default)
         try:
-            return json.loads(val)
+            parsed = json.loads(val)
+            return parsed if isinstance(parsed, list) and all(isinstance(x, str) for x in parsed) else list(default)
         except Exception:
-            return default
+            return list(default)
 
-    regions = parse_json_list(getattr(db_prefs, "preferred_regions", None), ["Ñuble", "Biobío"])
-    # Garantizar que tanto Ñuble como Biobío formen parte de las regiones preferidas
-    if "Biobío" not in regions:
-        regions.append("Biobío")
-    if "Ñuble" not in regions:
-        regions.append("Ñuble")
-
-    comunas = parse_json_list(getattr(db_prefs, "preferred_comunas", None), [])
+    regions = parse_json_list(getattr(db_prefs, "preferred_regions", None), ["Ñuble"])
+    comunas = parse_json_list(getattr(db_prefs, "preferred_comunas", None), DEFAULT_PRIORITY_COMUNAS)
     priority_comunas = parse_json_list(
         getattr(db_prefs, "priority_comunas", None), DEFAULT_PRIORITY_COMUNAS
     )
-    for c in DEFAULT_PRIORITY_COMUNAS:
-        if c not in priority_comunas:
-            priority_comunas.append(c)
-
     areas = parse_json_list(getattr(db_prefs, "interest_areas", None), DEFAULT_AREAS)
     keywords = parse_json_list(getattr(db_prefs, "interest_keywords", None), DEFAULT_INTEREST_KEYWORDS)
 

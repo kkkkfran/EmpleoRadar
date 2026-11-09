@@ -1,5 +1,7 @@
 """Prueba de integración End-to-End del ciclo completo de EmpleoRadar con fuente simulada."""
 
+from datetime import UTC, datetime
+
 import pytest
 
 from app.applications.service import ApplicationService
@@ -60,6 +62,7 @@ async def test_full_pipeline_detection_dedup_and_application(tmp_path):
 
     async def mock_notify_callback(job, match_result, job_id):
         notified_jobs.append((job, match_result, job_id))
+        return 123456789
 
     # Crear oferta de prueba
     sample_job = JobPayload(
@@ -71,6 +74,7 @@ async def test_full_pipeline_detection_dedup_and_application(tmp_path):
         comuna="Chillán",
         region="Ñuble",
         url="https://mock.local/oferta/001",
+        published_at=datetime.now(UTC),
     )
 
     source_registry = SourceRegistry(repo)
@@ -133,3 +137,31 @@ async def test_full_pipeline_detection_dedup_and_application(tmp_path):
     # Detener runner y cerrar BD
     await runner.stop()
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_notification_is_retried_without_duplicate():
+    from unittest.mock import AsyncMock
+
+    db = Database("sqlite+aiosqlite:///:memory:")
+    await db.create_tables()
+    repo = Repository(db)
+    job = JobPayload(source_name="MockSource", external_id="retry-1",
+                     title="Backend developer", url="https://mock.local/retry",
+                     published_at=datetime.now(UTC))
+    source = MockJobSource([job])
+    registry = SourceRegistry(repo)
+    callback = AsyncMock(side_effect=[None, 987654321])
+    runner = JobSchedulerRunner(repo, registry, 123, callback)
+    await runner.start()
+    try:
+        await runner.poll_source(source)
+        assert (await repo.get_job_stats())["notified"] == 0
+        await runner.poll_source(source)
+        assert (await repo.get_job_stats())["notified"] == 1
+        await runner.poll_source(source)
+        assert callback.await_count == 2
+        assert (await repo.get_job_stats())["total"] == 1
+    finally:
+        await runner.stop()
+        await db.close()

@@ -151,3 +151,40 @@ async def migrate_003(session: AsyncSession) -> None:
         )
 
 
+@register_migration("004", "Agregar decisión personal a las ofertas")
+async def migrate_004(session: AsyncSession) -> None:
+    """Persiste pendiente, postulado o descartado para cada oferta."""
+    import contextlib
+
+    from sqlalchemy import text
+
+    with contextlib.suppress(Exception):
+        await session.execute(
+            text("ALTER TABLE jobs ADD COLUMN user_decision VARCHAR(20) DEFAULT 'pending' NOT NULL")
+        )
+
+
+@register_migration("005", "Separar inventario inicial de notificaciones pendientes")
+async def migrate_005(session: AsyncSession) -> None:
+    """Conserva el inventario sin inventar entregas ni fechas de publicación."""
+    from sqlalchemy import inspect, text
+
+    connection = await session.connection()
+    columns = await connection.run_sync(
+        lambda sync_connection: {c["name"] for c in inspect(sync_connection).get_columns("jobs")}
+    )
+    if "notification_eligible" not in columns:
+        await session.execute(
+            text("ALTER TABLE jobs ADD COLUMN notification_eligible BOOLEAN DEFAULT 1 NOT NULL")
+        )
+        # Las versiones anteriores no distinguían inventario sin fecha de una
+        # notificación que realmente se intentó enviar. No prometer antigüedad.
+        await session.execute(
+            text(
+                "UPDATE jobs SET notification_eligible = 0 "
+                "WHERE published_at IS NULL AND notified = 0 "
+                "AND notification_message_id IS NULL"
+            )
+        )
+
+

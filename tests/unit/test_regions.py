@@ -52,3 +52,9 @@ def test_find_comuna_and_region():
     comuna, region = find_comuna_and_region("")
     assert comuna is None
     assert region is None
+
+
+def test_nuble_region_never_implies_chillan():
+    assert find_comuna_and_region("Ñuble") == (None, "Ñuble")
+    assert find_comuna_and_region("Región de Ñuble") == (None, "Ñuble")
+    assert find_comuna_and_region("Ninhue, Región de Ñuble") == ("Ninhue", "Ñuble")

@@ -17,10 +17,46 @@ from app.logging_config import setup_logging
 from app.profile.cv_storage import CVStorage
 from app.profile.service import ProfileService
 from app.scheduler.health import HealthMonitor
+from app.scheduler.http_health import HealthServer, validate_persistent_storage
 from app.scheduler.runner import JobSchedulerRunner
 from app.sources.registry import SourceRegistry
 
 logger = logging.getLogger("empleoradar.main")
+
+
+async def run_bot_services(bot, scheduler_runner, stop_event: asyncio.Event) -> None:
+    """Supervisa tareas: un fallo real debe terminar con error para reiniciar el servicio."""
+    async def start_scanning() -> None:
+        await bot.wait_until_ready()
+        await scheduler_runner.start()
+        await scheduler_runner.initialize_baseline()
+
+    async with bot:
+        bot_task = asyncio.create_task(bot.start(bot.settings.discord_bot_token), name="discord")
+        startup_task = asyncio.create_task(start_scanning(), name="initial-recovery")
+        stop_task = asyncio.create_task(stop_event.wait(), name="shutdown-signal")
+        watched = {bot_task, startup_task, stop_task}
+        try:
+            while True:
+                done, _ = await asyncio.wait(watched, return_when=asyncio.FIRST_COMPLETED)
+                if stop_task in done:
+                    break
+                if bot_task in done:
+                    await bot_task  # Propagar fallos de autenticación/conexión.
+                    raise RuntimeError("La conexión de Discord terminó inesperadamente.")
+                if startup_task in done:
+                    await startup_task
+                    watched.remove(startup_task)
+        finally:
+            if not startup_task.done():
+                startup_task.cancel()
+            await asyncio.gather(startup_task, return_exceptions=True)
+            await scheduler_runner.stop()
+            await bot.close()
+            for task in (bot_task, stop_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(bot_task, stop_task, return_exceptions=True)
 
 
 async def main() -> None:
@@ -40,6 +76,7 @@ async def main() -> None:
     logger.info("Iniciando EmpleoRadar v0.1.0 (Zona horaria: %s)", settings.timezone)
 
     # 3. Crear directorios necesarios
+    validate_persistent_storage(settings)
     settings.ensure_directories()
 
     # 4. Conexión a Base de Datos y Migraciones
@@ -82,8 +119,13 @@ async def main() -> None:
         notification_callback=bot.notify_new_job,
         poll_interval_minutes=settings.poll_interval_minutes,
         max_concurrent_requests=settings.max_concurrent_requests,
+        recovery_days=settings.recovery_days,
+        request_timeout_seconds=settings.request_timeout_seconds,
+        source_timeout_seconds=settings.source_timeout_seconds,
+        job_filter=lambda job: bot.get_destination_channel_id(job) is not None,
     )
     bot.scheduler_runner = scheduler_runner
+    health_server = HealthServer(bot, scheduler_runner, repo, port=settings.port)
 
     # 8. Manejo de señales de apagado controlado (Graceful Shutdown)
     stop_event = asyncio.Event()
@@ -99,28 +141,16 @@ async def main() -> None:
             loop.add_signal_handler(sig, signal_handler)
 
     try:
-        # Iniciar planificador
-        await scheduler_runner.start()
-
-        # Iniciar bot de Discord
-        async with bot:
-            logger.info("Conectando bot a Discord...")
-            bot_task = asyncio.create_task(bot.start(settings.discord_bot_token))
-
-            # Esperar a que el bot termine o se solicite apagado
-            done, pending = await asyncio.wait(
-                [bot_task, asyncio.create_task(stop_event.wait())],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            if bot_task in done and bot_task.exception():
-                logger.error("Error en bot de Discord: %s", bot_task.exception())
+        await health_server.start()
+        logger.info("Conectando bot a Discord; recuperación: últimos %d días.", settings.recovery_days)
+        await run_bot_services(bot, scheduler_runner, stop_event)
 
     except (KeyboardInterrupt, asyncio.CancelledError):
         logger.info("Interrupción detectada. Cerrando EmpleoRadar...")
     finally:
         logger.info("Apagando planificador y cerrando base de datos...")
         await scheduler_runner.stop()
+        await health_server.stop()
         await db.close()
         logger.info("✅ EmpleoRadar detenido de manera segura.")
 

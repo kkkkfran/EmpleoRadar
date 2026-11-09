@@ -31,6 +31,7 @@ WORKDIR /app
 
 # Copiar configuración de dependencias
 COPY pyproject.toml README.md ./
+COPY app/ ./app/
 
 # Instalar dependencias de Python
 RUN pip install --upgrade pip setuptools wheel && \
@@ -47,12 +48,11 @@ RUN mkdir -p /app/data/private/resumes /app/data/backups /app/logs && \
 # Cambiar al usuario no privilegiado
 USER empleoradar
 
-# Volúmenes para persistencia de base de datos SQLite, CVs privados y logs
-VOLUME ["/app/data", "/app/logs"]
+# Persistencia: usar Railway Volumes montado en /app/data (no se soporta la instrucción VOLUME)
 
-# Healthcheck interno para verificar que el proceso esté vivo
+# Comprueba conexión Discord, base de datos y planificador.
 HEALTHCHECK --interval=60s --timeout=10s --start-period=20s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)" || exit 1
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.getenv('PORT', '8080') + '/health', timeout=5)"
 
 # Comando de inicio
 CMD ["python", "-m", "app.main"]

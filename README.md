@@ -2,14 +2,16 @@
 
 **Bot de Discord personal para detección inteligente, filtrado y postulación asistida a ofertas laborales.**
 
-Diseñado con arquitectura modular en Python 3.12, persistencia en SQLite/PostgreSQL (SQLAlchemy 2.x), automatización de sondeo periódico, deduplicación mediante huellas criptográficas, gestión privada de currículum en PDF y estricto cumplimiento de términos de servicio y seguridad.
+Python 3.12, SQLite persistente (SQLAlchemy 2.x), sondeo cada dos minutos, deduplicación y reintentos de avisos fallidos. Al arrancar recupera ofertas fechadas de los últimos cuatro días.
+
+**Despliegue en Railway:** sigue [RAILWAY.md](RAILWAY.md). Incluye variables, volumen, recuperación del historial y diagnóstico.
 
 ---
 
 ## 🗺️ Cobertura Geográfica y Perfil
 
-- **Ubicación inicial prioritaria:** Región de Ñuble, Chile (Chillán, Chillán Viejo, San Carlos, Coihueco, Bulnes, Quirihue, Yungay y las 21 comunas oficiales).
-- **Extensibilidad:** Soporte integrado para las 16 regiones y 346 comunas de Chile.
+- **Ubicación de alertas:** solo Chillán y Chillán Viejo para empleos presenciales o híbridos; también remoto disponible desde Chile. Una ubicación genérica «Ñuble» no basta.
+- **Dos canales:** informática (incluye técnicos y analistas TI) y otros empleos sin exigir profesión ni título técnico superior (bodega, retail, ayudantes, restaurantes, etc.).
 - **Áreas de especialidad:** Ingeniería en Informática, Desarrollo Backend, Full Stack, Web, Soporte TI, Redes, Infraestructura, Cloud, DevOps, Bases de Datos, Automatización y Ciberseguridad.
 - **Filtro inteligente:** Exclusión automática de prácticas profesionales y memorias por defecto (configurable). No descarta vacantes por falta de sueldo publicado.
 

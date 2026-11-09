@@ -10,8 +10,10 @@ import html
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import urljoin, urlsplit
+from zoneinfo import ZoneInfo
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -19,7 +21,7 @@ from bs4 import BeautifulSoup
 from app.jobs.deduplication import compute_job_fingerprint
 from app.jobs.models import JobPayload
 from app.jobs.normalizer import normalize_job_payload
-from app.sources.base import BaseJobSource
+from app.sources.base import BaseJobSource, SourceError
 
 logger = logging.getLogger(__name__)
 
@@ -39,20 +41,14 @@ class InacapSource(BaseJobSource):
             rate_limit_delay=1.5,
         )
         self.search_url = "https://emplea.inacap.cl/trabajo/trabajos-en-chile"
-        # Búsquedas estratégicas:
-        # Search[region]=4235: Región de Ñuble (Chillán y comunas)
-        # Search[region]=9: Región del Biobío (Concepción)
-        # Search[terms]=informatica / desarrollador: Perfiles TI
         self.search_queries: list[dict[str, str]] = [
-            # 1. Informática en todo Chile (más vacantes remotas)
-            {"Search[terms]": "informatica", "Search[orderFilter]": ""},
-            # 2. Desarrollador / Software
-            {"Search[terms]": "desarrollador", "Search[orderFilter]": ""},
-            # 3. Todas las vacantes en Región de Ñuble (Chillán)
-            {"Search[region]": "4235", "Search[orderFilter]": ""},
-            # 4. Todas las vacantes en Región del Biobío (Concepción)
-            {"Search[region]": "9", "Search[orderFilter]": ""},
+            {"Search[region]": "4235", "Search[township]": "231"},
+            {"Search[region]": "4235", "Search[township]": "236"},
+            {"Search[remote]": "1"},
         ]
+        self.recovery_days = 4
+        self.max_pages = 3
+        self._detail_cache: dict[str, JobPayload] = {}
 
     async def fetch_jobs(
         self,
@@ -63,27 +59,71 @@ class InacapSource(BaseJobSource):
         all_jobs: list[JobPayload] = []
         seen_urls: set[str] = set()
 
-        for q_params in self.search_queries:
+        errors: list[str] = []
+        successful = 0
+        cutoff = (datetime.now(ZoneInfo("America/Santiago")) - timedelta(days=self.recovery_days)).date()
+        for query in self.search_queries:
+            q_params = {"Search[jobOfferType]": "0", "Search[dateFilter]": "2", **query}
             try:
-                html_text = await self.request_get(session, self.search_url, params=q_params)
-                jobs = self._parse_inacap_page(html_text)
-
-                for job in jobs:
-                    if job.url not in seen_urls:
+                next_url = self.search_url
+                for page in range(self.max_pages):
+                    html_text = await self.request_get(session, next_url, params=q_params if page == 0 else None)
+                    jobs = self._parse_inacap_page(html_text)
+                    successful += 1
+                    for job in jobs:
+                        if job.url in seen_urls or not job.published_at or job.published_at.date() < cutoff:
+                            continue
                         seen_urls.add(job.url)
-                        all_jobs.append(job)
-
-            except Exception as e:
-                logger.warning("[%s] Error consultando query %s: %s", self.name, q_params, e)
-
-        if all_jobs:
-            self.record_success(len(all_jobs))
+                        if job.url in self._detail_cache:
+                            all_jobs.append(self._detail_cache[job.url])
+                            continue
+                        # Leer la ficha: el listado omite requisitos y practicas.
+                        try:
+                            detail = await self.request_get(session, job.url)
+                            detailed = self._parse_inacap_page(detail, detail_url=job.url)
+                            if not detailed:
+                                raise SourceError("Ficha INACAP sin datos JobPosting")
+                            result = next((item for item in detailed if item.url == job.url), None)
+                            if result is None:
+                                raise SourceError("Ficha INACAP no coincide con la oferta solicitada")
+                            result.published_at = result.published_at or job.published_at
+                            result.comuna = result.comuna or job.comuna
+                            result.region = result.region or job.region
+                            result.location_raw = result.location_raw or job.location_raw
+                            result.education_required = self._detail_requirements(detail)
+                            if len(self._detail_cache) >= 1000:
+                                self._detail_cache.pop(next(iter(self._detail_cache)))
+                            self._detail_cache[job.url] = result
+                            all_jobs.append(result)
+                        except Exception as exc:
+                            errors.append(str(exc))
+                    soup = BeautifulSoup(html_text, "html.parser")
+                    next_link = soup.select_one('a[rel="next"], li.next a')
+                    if not next_link:
+                        break
+                    next_url = urljoin(self.search_url, str(next_link.get("href", "")))
+                    if urlsplit(next_url).hostname not in {"emplea.inacap.cl", "empleaxchile.cl"}:
+                        break
+            except Exception as exc:
+                errors.append(str(exc))
+                logger.warning("[%s] Error consultando query %s: %s", self.name, query, exc)
+        if not successful:
+            error = errors[0] if errors else "No se pudo consultar INACAP"
+            self.record_error(error)
+            raise SourceError(error)
+        if errors:
+            self.record_error("Consulta parcial: " + errors[0])
         else:
-            self.record_success(0)
-
+            self.record_success(len(all_jobs))
         return all_jobs
 
-    def _parse_inacap_page(self, html_text: str) -> list[JobPayload]:
+    @staticmethod
+    def _detail_requirements(html_text: str) -> str | None:
+        text = BeautifulSoup(html_text, "html.parser").get_text(" ", strip=True)
+        match = re.search(r"Requisitos\s+(.+?)(?:Descripci.n del puesto|Postular)", text, re.DOTALL)
+        return match.group(1).strip() if match else None
+
+    def _parse_inacap_page(self, html_text: str, detail_url: str | None = None) -> list[JobPayload]:
         """Parsea los datos estructurados Schema.org JSON-LD o tarjetas HTML de INACAP."""
         results: list[JobPayload] = []
         soup = BeautifulSoup(html_text, "html.parser")
@@ -94,6 +134,13 @@ class InacapSource(BaseJobSource):
                 continue
             try:
                 data = json.loads(s.string)
+                if isinstance(data, dict) and data.get("@type") == "JobPosting":
+                    if detail_url and not data.get("url"):
+                        data["url"] = detail_url
+                    parsed = self._parse_jsonld_job(data)
+                    if parsed:
+                        results.append(parsed)
+                    continue
                 main_entity = data.get("mainEntity") if isinstance(data, dict) else None
                 if not main_entity or not isinstance(main_entity, dict):
                     continue
@@ -158,6 +205,8 @@ class InacapSource(BaseJobSource):
 
             loc_data = item.get("jobLocation") or {}
             raw_loc = loc_data.get("address") if isinstance(loc_data, dict) else ""
+            if isinstance(raw_loc, dict):
+                raw_loc = ", ".join(str(raw_loc.get(k) or "") for k in ("addressLocality", "addressRegion", "addressCountry"))
             location_raw = html.unescape(raw_loc or "").strip()
 
             date_str = str(item.get("datePosted") or "").strip()
@@ -178,6 +227,9 @@ class InacapSource(BaseJobSource):
                 "url": job_url,
                 "company": company,
                 "location": location_raw,
+                "modality": "remoto" if item.get("jobLocationType") == "TELECOMMUTE" else location_raw,
+                "schedule": item.get("employmentType"),
+                "requirements": item.get("qualifications"),
                 "description": desc,
                 "published_at": published_at,
                 "external_id": external_id,

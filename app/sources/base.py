@@ -7,6 +7,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import aiohttp
@@ -50,6 +51,7 @@ class BaseJobSource(abc.ABC):
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.rate_limit_delay = rate_limit_delay
+        self.is_enabled = True
 
         # Estado de salud en memoria
         self.status = SourceStatus.OPERATIVA
@@ -67,7 +69,7 @@ class BaseJobSource(abc.ABC):
     ) -> list[JobPayload]:
         """Extrae ofertas recientes desde la fuente.
 
-        Debe capturar excepciones internas y retornar una lista de JobPayload normalizados.
+        Devuelve ofertas normalizadas y propaga SourceError si no pudo consultar la fuente.
         """
         pass
 
@@ -86,6 +88,30 @@ class BaseJobSource(abc.ABC):
         params: dict[str, Any] | None = None,
     ) -> str:
         """Realiza una petición GET segura con reintentos y backoff exponencial."""
+        return await self._request(session, "GET", url, headers=headers, params=params)
+
+    async def request_search_post(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        payload: dict[str, Any],
+        params: dict[str, Any] | None = None,
+    ) -> str:
+        """POST de consulta pública; no usar para postulaciones ni otras escrituras."""
+        return await self._request(
+            session, "POST", url, params=params, payload=payload,
+            headers={"Accept": "application/json"},
+        )
+
+    async def _request(
+        self,
+        session: aiohttp.ClientSession,
+        method: str,
+        url: str,
+        headers: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> str:
         if not is_safe_url(url):
             raise SourceError(f"URL no permitida por seguridad (SSRF protection): {url}")
 
@@ -107,16 +133,32 @@ class BaseJobSource(abc.ABC):
         for attempt in range(1, self.max_retries + 1):
             try:
                 timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
-                async with session.get(
+                async with session.request(
+                    method,
                     url,
                     headers=default_headers,
                     params=params,
+                    json=payload,
                     timeout=timeout,
                     allow_redirects=True,
                 ) as response:
                     if response.status == 200:
                         return await response.text(encoding="utf-8", errors="replace")
                     elif response.status in (429, 503, 504):
+                        if attempt == self.max_retries:
+                            break
+                        retry_after = response.headers.get("Retry-After")
+                        if retry_after:
+                            try:
+                                retry_delay = float(retry_after)
+                            except ValueError:
+                                try:
+                                    retry_delay = parsedate_to_datetime(retry_after).timestamp() - time.time()
+                                except (ValueError, TypeError, OverflowError):
+                                    retry_delay = delay
+                            if retry_delay > 60:
+                                raise SourceError(f"HTTP {response.status}: Retry-After excede este ciclo")
+                            delay = max(delay, retry_delay)
                         logger.warning(
                             "[%s] HTTP %d (intento %d/%d). Reintentando en %.1fs...",
                             self.name,

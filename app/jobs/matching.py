@@ -89,7 +89,7 @@ def evaluate_job_match(
 
     if is_remote:
         loc_score = 1.0
-        reasons.append("Modalidad 100% Remota: compatible desde cualquier ubicación.")
+        reasons.append("Modalidad Remota: trabajo a distancia.")
     elif job.comuna and any(
         normalize_text_match(p) == comuna_norm for p in criteria.priority_comunas
     ):

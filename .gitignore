@@ -56,3 +56,7 @@ htmlcov/
 
 # Ruff
 .ruff_cache/
+
+# Local source inspection downloads
+data/*inspect*
+data/bne_js_*.js

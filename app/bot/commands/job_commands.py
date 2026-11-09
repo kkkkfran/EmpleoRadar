@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from app.bot.embeds import (
     create_health_embed,
-    create_job_card_embed,
     create_profile_embed,
 )
 from app.bot.modals.forms_modals import EditProfileBasicModal
-from app.bot.views.job_views import JobCardView
+from app.bot.views.job_views import create_job_card_layout
 from app.jobs.matching import evaluate_job_match
 from app.profile.preferences import criteria_from_db_preferences
 from app.security.permissions import owner_check
@@ -103,7 +101,7 @@ class EmpleoCog(
             name="⚙️ Configuración y Alertas",
             value=(
                 "• `/empleo canal [tipo] [canal]` - Consulta o reasigna los canales de Informática y Chillán.\n"
-                "• `/empleo sincronizar [desde_fecha]` - Escanea y publica vacantes desde el 13 de octubre.\n"
+                "• `/empleo sincronizar` - Escanea y publica únicamente vacantes nuevas.\n"
                 "• `/empleo fuentes` - Lista el estado operativo de los portales de empleo.\n"
                 "• `/empleo estado` - Resumen rápido de actividad y canales configurados.\n"
                 "• `/empleo salud` - Diagnóstico de base de datos, memoria y conexiones.\n"
@@ -184,13 +182,14 @@ class EmpleoCog(
                 f"💻 **Canal 1: Informática General**\n"
                 f"• Canal asignado: <#{inf_id}> (ID: `{inf_id}`)\n"
                 "• **Cargos:** Ing. en Informática, Desarrollo (Python/Golang/.NET/JS), Soporte TI, Redes, Cloud, DevOps, etc.\n"
-                "• **Zonas:** Entre Concepción y Ñuble, Santiago y vacantes Remotas para Chile.\n\n"
+                "• **Zonas:** Chillán, Chillán Viejo y vacantes remotas disponibles desde Chile.\n\n"
                 f"🛍️ **Canal 2: Otros Empleos en Chillán (Sin título)**\n"
                 f"• Canal asignado: <#{chi_id}> (ID: `{chi_id}`)\n"
                 "• **Cargos:** Retail, tiendas (Ripley, Falabella, Paris, Jumbo, Líder), reponedores, organizar ropa, bodega, cajeros, operarios.\n"
-                "• **Filtro estricto:** Solo ofertas dentro de Chillán / Chillán Viejo y sin requisito de título universitario.\n\n"
+                "• **Filtro estricto:** Chillán / Chillán Viejo o remoto para Chile, sin exigir profesión ni título técnico superior.\n\n"
                 "🚫 **Mensajes Privados (MD):** Desactivados estrictamente. Todas las alertas van directo a sus canales.\n"
-                "💡 El bot escanea automáticamente desde el 13 de octubre al iniciar."
+                f"💡 Al iniciar recupera los últimos {self.bot.settings.recovery_days} días; "
+                f"luego revisa cada {self.bot.settings.poll_interval_minutes} minutos."
             ),
             color=discord.Color.blue(),
         )
@@ -199,159 +198,42 @@ class EmpleoCog(
     # --- /empleo sincronizar ---
     @app_commands.command(
         name="sincronizar",
-        description="Escanea portales y publica en los canales correspondientes ofertas desde el 13 de octubre.",
+        description="Escanea portales y publica únicamente ofertas nuevas que cumplan los filtros.",
     )
-    @app_commands.describe(
-        desde_fecha="Fecha mínima de publicación (formato AAAA-MM-DD o DD-MM, por defecto 2026-10-13)"
-    )
+    @app_commands.describe(desde_fecha="Fecha desde AAAA-MM-DD (opcional)")
     @app_commands.check(owner_check)
     async def sincronizar(
         self,
         interaction: discord.Interaction,
-        desde_fecha: str | None = "2026-10-13",
+        desde_fecha: str | None = None,
     ) -> None:
         await interaction.response.defer(thinking=True)
 
-        cutoff_date = datetime(2026, 10, 13)
-        if desde_fecha and desde_fecha.strip():
-            txt = desde_fecha.strip()
+        # Una sincronización manual usa exactamente el mismo pipeline seguro que el
+        # planificador: solo ofertas nuevas, filtro estricto y Components V2.
+        # El parámetro histórico se conserva en la firma por compatibilidad, pero ya
+        # no puede provocar reenvíos masivos de publicaciones existentes.
+        if not self.scheduler_runner:
+            await interaction.followup.send(
+                "⚠️ El planificador todavía no está disponible. Inténtalo nuevamente en unos segundos.",
+                ephemeral=True,
+            )
+            return
+        cutoff_date = None
+        if desde_fecha:
             try:
-                if len(txt) == 10 and "-" in txt:
-                    parts = [int(p) for p in txt.split("-")]
-                    cutoff_date = datetime(parts[0], parts[1], parts[2])
-                elif len(txt) == 10 and "/" in txt:
-                    parts = [int(p) for p in txt.split("/")]
-                    cutoff_date = datetime(parts[2], parts[1], parts[0])
-                elif len(txt) == 5 and ("-" in txt or "/" in txt):
-                    sep = "-" if "-" in txt else "/"
-                    parts = [int(p) for p in txt.split(sep)]
-                    cutoff_date = datetime(2026, parts[1], parts[0])
-            except Exception:
-                cutoff_date = datetime(2026, 10, 13)
-
-        db_owner = await self.repo.get_or_create_owner(interaction.user.id)
-        prefs = await self.repo.get_or_create_preferences(db_owner.id)
-        criteria = criteria_from_db_preferences(prefs)
-
-        active_sources = self.source_registry.get_active_sources()
-        total_encontradas = 0
-        total_subidas_it = 0
-        total_subidas_chillan = 0
-        total_guardadas = 0
-
-        async with aiohttp.ClientSession() as session:
-            for src in active_sources:
-                try:
-                    raw_jobs = await src.fetch_jobs(session, criteria)
-                    total_encontradas += len(raw_jobs)
-                    db_source = await self.repo.get_or_create_source(src.name)
-
-                    for job_payload in raw_jobs:
-                        pub_date = job_payload.published_at or datetime.now()
-                        if pub_date < cutoff_date:
-                            continue
-
-                        if not job_payload.dedup_hash:
-                            from app.jobs.deduplication import compute_job_fingerprint
-
-                            compute_job_fingerprint(job_payload)
-
-                        exists = await self.repo.job_exists_by_hash(job_payload.dedup_hash)
-                        if exists:
-                            existing_job = await self.repo.job_exists_by_source_and_external_id(
-                                db_source.id, str(job_payload.external_id)
-                            )
-                            saved_job_id = existing_job.id if existing_job else None
-                        else:
-                            saved_job = await self.repo.add_job(
-                                source_id=db_source.id,
-                                external_id=job_payload.external_id,
-                                title=job_payload.title,
-                                company=job_payload.company,
-                                description=job_payload.description,
-                                location=job_payload.location_raw,
-                                region=job_payload.region,
-                                comuna=job_payload.comuna,
-                                modality=job_payload.modality.value,
-                                contract_type=job_payload.contract_type.value,
-                                schedule=job_payload.schedule.value,
-                                salary_min=job_payload.salary_min,
-                                salary_max=job_payload.salary_max,
-                                salary_type=job_payload.salary_type,
-                                requirements=job_payload.requirements,
-                                experience_required=job_payload.experience_required,
-                                education_required=job_payload.education_required,
-                                url=job_payload.url,
-                                published_at=job_payload.published_at,
-                                is_internship=job_payload.is_internship,
-                                dedup_hash=job_payload.dedup_hash,
-                                raw_data=str(job_payload.raw_data or {}),
-                            )
-                            saved_job_id = saved_job.id
-                            total_guardadas += 1
-
-                        match_result = evaluate_job_match(job_payload, criteria)
-
-                        # Enrutamiento hacia los canales configurados
-                        dest_channel_id = self.bot.get_destination_channel_id(job_payload)
-                        if dest_channel_id:
-                            import contextlib
-
-                            dest_channel = None
-                            with contextlib.suppress(Exception):
-                                dest_channel = self.bot.get_channel(
-                                    dest_channel_id
-                                ) or await self.bot.fetch_channel(dest_channel_id)
-
-                            if dest_channel and isinstance(
-                                dest_channel, (discord.TextChannel, discord.Thread)
-                            ):
-                                embed = create_job_card_embed(
-                                    job_payload,
-                                    match_result=match_result,
-                                    job_id=saved_job_id or 0,
-                                )
-                                view = JobCardView(
-                                    job_id=saved_job_id or 0,
-                                    job_url=job_payload.url,
-                                    owner_id=interaction.user.id,
-                                    application_service=self.app_service,
-                                    repository=self.repo,
-                                )
-                                await dest_channel.send(embed=embed, view=view)
-                                if saved_job_id:
-                                    await self.repo.mark_job_notified(saved_job_id)
-
-                                it_id = getattr(
-                                    self.bot.settings,
-                                    "discord_channel_informatica_id",
-                                    1561207531659985106,
-                                )
-                                if dest_channel_id == it_id:
-                                    total_subidas_it += 1
-                                else:
-                                    total_subidas_chillan += 1
-                                await asyncio.sleep(0.3)
-
-                except Exception as err:
-                    logger.error("Error al sincronizar fuente %s: %s", src.name, err)
-
-        it_id = getattr(
-            self.bot.settings, "discord_channel_informatica_id", 1561207531659985106
+                cutoff_date = datetime.strptime(desde_fecha.strip(), "%Y-%m-%d").replace(
+                    tzinfo=ZoneInfo(self.bot.settings.timezone)
+                )
+            except ValueError:
+                await interaction.followup.send("Usa una fecha AAAA-MM-DD.", ephemeral=True)
+                return
+        sent_count = await self.scheduler_runner.run_all_sources_now(since_date=cutoff_date)
+        await interaction.followup.send(
+            f"✅ Sincronización terminada. Nuevas ofertas publicadas: **{sent_count}**. "
+            "El historial no se volvió a enviar.",
+            ephemeral=True,
         )
-        chi_id = getattr(
-            self.bot.settings, "discord_channel_chillan_id", 1561217778722283613
-        )
-
-        summary_msg = (
-            f"✅ **Sincronización completada desde el {cutoff_date.strftime('%d/%m/%Y')}**\n\n"
-            f"• **Ofertas analizadas en portales:** {total_encontradas}\n"
-            f"• **Nuevas vacantes registradas en base de datos:** {total_guardadas}\n"
-            f"• 💻 **Publicadas en Informática (<#{it_id}>):** {total_subidas_it}\n"
-            f"• 🛍️ **Publicadas en Chillán Otros Empleos (<#{chi_id}>):** {total_subidas_chillan}\n\n"
-            f"🎯 Se respetó la separación estricta de canales y cero mensajes privados."
-        )
-        await interaction.followup.send(summary_msg)
 
     # --- /empleo estado ---
     @app_commands.command(
@@ -436,15 +318,13 @@ class EmpleoCog(
                 url=job.url,
             )
             match_res = evaluate_job_match(payload, criteria)
-            embed = create_job_card_embed(job, match_result=match_res, job_id=job.id)
-            view = JobCardView(
+            view = create_job_card_layout(
+                job,
+                match_result=match_res,
                 job_id=job.id,
-                job_url=job.url,
-                owner_id=interaction.user.id,
-                application_service=self.app_service,
-                repository=self.repo,
+                decision=job.user_decision,
             )
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            await interaction.followup.send(view=view, ephemeral=True)
 
     # --- /empleo recientes ---
     @app_commands.command(
@@ -483,15 +363,13 @@ class EmpleoCog(
                 url=job.url,
             )
             match_res = evaluate_job_match(payload, criteria)
-            embed = create_job_card_embed(job, match_result=match_res, job_id=job.id)
-            view = JobCardView(
+            view = create_job_card_layout(
+                job,
+                match_result=match_res,
                 job_id=job.id,
-                job_url=job.url,
-                owner_id=interaction.user.id,
-                application_service=self.app_service,
-                repository=self.repo,
+                decision=job.user_decision,
             )
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            await interaction.followup.send(view=view, ephemeral=True)
 
     # --- /empleo ver ---
     @app_commands.command(
@@ -524,15 +402,13 @@ class EmpleoCog(
             url=job.url,
         )
         match_res = evaluate_job_match(payload, criteria)
-        embed = create_job_card_embed(job, match_result=match_res, job_id=job.id)
-        view = JobCardView(
+        view = create_job_card_layout(
+            job,
+            match_result=match_res,
             job_id=job.id,
-            job_url=job.url,
-            owner_id=interaction.user.id,
-            application_service=self.app_service,
-            repository=self.repo,
+            decision=job.user_decision,
         )
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(view=view, ephemeral=True)
 
     # --- /empleo fuentes ---
     @app_commands.command(
