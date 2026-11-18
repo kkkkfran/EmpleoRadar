@@ -142,7 +142,7 @@ DISCORD_GUILD_ID=opcional_id_del_servidor_para_sync_inmediato
 DATABASE_URL=sqlite+aiosqlite:///data/empleoradar.db
 TIMEZONE=America/Santiago
 LOG_LEVEL=INFO
-POLL_INTERVAL_MINUTES=15
+POLL_INTERVAL_MINUTES=2
 APPLICATION_REQUIRE_CONFIRMATION=true
 ```
 
