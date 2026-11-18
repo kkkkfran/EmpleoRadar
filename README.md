@@ -139,10 +139,12 @@ Edita `.env` con tus credenciales:
 DISCORD_BOT_TOKEN=tu_token_de_discord_aqui
 DISCORD_OWNER_ID=tu_discord_user_id_numerico
 DISCORD_GUILD_ID=opcional_id_del_servidor_para_sync_inmediato
+BNE_POSTULANTE_ID=tu_id_de_postulante_bne
 DATABASE_URL=sqlite+aiosqlite:///data/empleoradar.db
 TIMEZONE=America/Santiago
 LOG_LEVEL=INFO
 POLL_INTERVAL_MINUTES=2
+PUBLICATION_START_DATE=2026-11-16
 APPLICATION_REQUIRE_CONFIRMATION=true
 ```
 

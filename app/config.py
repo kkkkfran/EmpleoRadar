@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,10 @@ class Settings(BaseSettings):
         description="ID del canal de Discord para otros empleos en Chillán (retail, operarios, tiendas)",
     )
 
+    bne_postulante_id: str | None = Field(
+        default=None, description="ID de postulante BNE para enlaces de ofertas"
+    )
+
     # Database
     database_url: str = Field(
         default="sqlite+aiosqlite:///data/empleoradar.db",
@@ -51,6 +56,9 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = Field(default=30, ge=5, le=120)
     source_timeout_seconds: int = Field(default=180, ge=10, le=600)
     recovery_days: int = Field(default=4, ge=1, le=30)
+    publication_start_date: date = Field(
+        default=date(2026, 11, 16), description="Fecha inicial inclusiva para publicar ofertas"
+    )
     port: int = Field(default=8080, ge=1, le=65535)
 
     # CV Storage
@@ -104,6 +112,27 @@ class Settings(BaseSettings):
         except (ValueError, TypeError) as exc:
             field_name = info.field_name.upper()
             raise ValueError(f"{field_name} debe ser un número entero válido (recibido: {v!r})") from exc
+
+    @field_validator("bne_postulante_id", mode="before")
+    @classmethod
+    def validate_bne_postulante_id(cls, value: Any) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        candidate_id = str(value).strip()
+        if not candidate_id.isdecimal() or int(candidate_id) <= 0:
+            raise ValueError("BNE_POSTULANTE_ID debe contener solo dígitos y ser mayor que cero")
+        return candidate_id
+
+    @field_validator("publication_start_date", mode="before")
+    @classmethod
+    def validate_publication_start_date(cls, value: Any) -> date:
+        earliest = date(2026, 11, 16)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return earliest
+        configured = date.fromisoformat(value) if isinstance(value, str) else value
+        if not isinstance(configured, date) or configured < earliest:
+            raise ValueError("PUBLICATION_START_DATE no puede ser anterior a 2026-11-16")
+        return configured
 
     @field_validator("discord_owner_id", mode="before")
     @classmethod

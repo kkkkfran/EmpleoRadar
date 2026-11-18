@@ -24,10 +24,18 @@ def test_parse_bne_item() -> None:
     assert payload.company == "Tech Chile SpA"
     assert payload.comuna == "Chillán"
     assert payload.region == "Ñuble"
-    assert payload.url == "https://bne.gob.cl/ofertas/1597574"
+    assert payload.url == "https://www.bne.cl/ofertas/1597574"
     assert payload.external_id == "BNE-9988"
     assert payload.published_at == datetime(2026, 10, 17, 0, 0)
     assert payload.dedup_hash is not None
+
+
+def test_bne_url_includes_configured_applicant_id_without_changing_offer_id() -> None:
+    source = BNESource(postulante_id="10660398")
+
+    assert source.build_offer_url("001591234") == (
+        "https://www.bne.cl/ofertas/001591234?idPostulante=10660398"
+    )
 
 
 def test_parse_inacap_jsonld_item() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
@@ -107,6 +108,27 @@ class EmpleoRadarBot(commands.Bot):
         try:
             if not self.is_ready():
                 return None
+            start_date = getattr(self.settings, "publication_start_date", None)
+            if start_date is not None:
+                published_at = job.published_at
+                if published_at is None:
+                    logger.info(
+                        "Aviso #%d omitido: no tiene fecha verificable para el umbral de publicación.",
+                        job_id,
+                    )
+                    return None
+                if published_at.tzinfo is not None:
+                    published_date = published_at.astimezone(
+                        ZoneInfo(self.settings.timezone)
+                    ).date()
+                else:
+                    published_date = published_at.date()
+                if published_date < start_date:
+                    logger.info(
+                        "Aviso #%d omitido: fecha %s anterior al inicio %s.",
+                        job_id, published_date, start_date,
+                    )
+                    return None
             if job.published_at:
                 published = job.published_at
                 if published.tzinfo is None:

@@ -22,8 +22,9 @@ logger = logging.getLogger(__name__)
 class SourceRegistry:
     """Administra las fuentes de empleo registradas en el sistema."""
 
-    def __init__(self, repository: Repository) -> None:
+    def __init__(self, repository: Repository, bne_postulante_id: str | None = None) -> None:
         self.repo = repository
+        self.bne_postulante_id = bne_postulante_id
         self._sources: dict[str, BaseJobSource] = {}
         self._register_default_sources()
 
@@ -31,7 +32,7 @@ class SourceRegistry:
         """Registra los conectores predeterminados."""
         sources = [
             ChileTrabajosSource(),
-            BNESource(),
+            BNESource(postulante_id=self.bne_postulante_id),
             InacapSource(),
             TrabajandoSource(),
             IndeedSource(),

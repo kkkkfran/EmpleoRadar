@@ -95,7 +95,7 @@ async def main() -> None:
         profile_service,
         require_confirmation=settings.application_require_confirmation,
     )
-    source_registry = SourceRegistry(repo)
+    source_registry = SourceRegistry(repo, bne_postulante_id=settings.bne_postulante_id)
     health_monitor = HealthMonitor(repo, source_registry)
 
     # Asegurar registro inicial del propietario
@@ -120,6 +120,7 @@ async def main() -> None:
         poll_interval_minutes=settings.poll_interval_minutes,
         max_concurrent_requests=settings.max_concurrent_requests,
         recovery_days=settings.recovery_days,
+        publication_start_date=settings.publication_start_date,
         request_timeout_seconds=settings.request_timeout_seconds,
         source_timeout_seconds=settings.source_timeout_seconds,
         job_filter=lambda job: bot.get_destination_channel_id(job) is not None,

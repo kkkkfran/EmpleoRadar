@@ -9,8 +9,9 @@ import logging
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -57,6 +58,7 @@ class JobSchedulerRunner:
         poll_interval_minutes: int = 2,
         max_concurrent_requests: int = 3,
         recovery_days: int = 4,
+        publication_start_date: date | None = None,
         request_timeout_seconds: int = 30,
         source_timeout_seconds: float = 180,
         job_filter: Callable[[JobPayload], bool] | None = None,
@@ -68,6 +70,7 @@ class JobSchedulerRunner:
         self.notification_callback = notification_callback
         self.poll_interval_minutes = poll_interval_minutes
         self.recovery_days = recovery_days
+        self.publication_start_date = publication_start_date
         self.request_timeout_seconds = request_timeout_seconds
         self.source_timeout_seconds = source_timeout_seconds
         self.job_filter = job_filter
@@ -189,6 +192,11 @@ class JobSchedulerRunner:
                 now = _now()
                 self.last_cycle_started_at = now
                 cutoff = now - timedelta(days=self.recovery_days)
+                if self.publication_start_date is not None:
+                    start_cutoff = datetime.combine(
+                        self.publication_start_date, datetime.min.time()
+                    )
+                    cutoff = max(cutoff, start_cutoff)
                 if since_date is not None:
                     cutoff = max(cutoff, _utc_naive(since_date))
                 owner = await self.repo.get_owner(self.owner_id)
@@ -204,7 +212,8 @@ class JobSchedulerRunner:
                 attempted_ids: set[int] = set()
                 fetch_tasks = [asyncio.create_task(self._collect_source(s, criteria)) for s in sources]
                 dispatched = await self._dispatch_pending(
-                    criteria, cutoff, now, attempted_ids, include_undated=since_date is None
+                    criteria, cutoff, now, attempted_ids,
+                    include_undated=since_date is None and self.publication_start_date is None,
                 )
                 for completed in asyncio.as_completed(fetch_tasks):
                     result = await completed
@@ -220,14 +229,18 @@ class JobSchedulerRunner:
                     initial_inventory = source.name not in self._initialized_sources
                     await self._store_jobs(
                         result.jobs, cutoff, _now(),
-                        allow_undated=not initial_inventory and since_date is None,
+                        allow_undated=(
+                            not initial_inventory and since_date is None
+                            and self.publication_start_date is None
+                        ),
                     )
                     if result.error is None:
                         self._initialized_sources.add(source.name)
                     else:
                         logger.warning("[%s] Consulta incompleta: %s", source.name, result.error)
                     dispatched += await self._dispatch_pending(
-                        criteria, cutoff, _now(), attempted_ids, include_undated=since_date is None
+                        criteria, cutoff, _now(), attempted_ids,
+                        include_undated=since_date is None and self.publication_start_date is None,
                     )
                 self._baseline_ready = all(
                     s.name in self._initialized_sources for s in self.source_registry.get_active_sources()
@@ -256,6 +269,12 @@ class JobSchedulerRunner:
             if payload.status != "activa":
                 continue
             eligible = payload.published_at is not None or allow_undated
+            if (
+                eligible and self.publication_start_date is not None
+                and payload.published_at is not None
+                and payload.published_at.date() < self.publication_start_date
+            ):
+                eligible = False
             if self.job_filter and not self.job_filter(payload):
                 eligible = False
             if not payload.dedup_hash:
@@ -269,6 +288,12 @@ class JobSchedulerRunner:
             if existing is None:
                 existing = await self.repo.find_semantic_duplicate(payload.title, payload.comuna, payload.company)
             if existing is not None:
+                if (
+                    source.name == "BNE"
+                    and existing.source_id == source.id
+                    and existing.url != payload.url
+                ):
+                    await self.repo.update_job(existing.id, url=payload.url)
                 if existing.notified or existing.user_decision != "pending":
                     continue
                 if eligible and payload.published_at is not None and not existing.notification_eligible:
@@ -298,8 +323,7 @@ class JobSchedulerRunner:
             )
             await self.repo.increment_source_jobs_count(source.id)
 
-    @staticmethod
-    def _payload_from_job(job: Job) -> JobPayload:
+    def _payload_from_job(self, job: Job) -> JobPayload:
         values = {
             name: getattr(job, name)
             for name in JobPayload.model_fields
@@ -314,10 +338,18 @@ class JobSchedulerRunner:
                     raw_data = ast.literal_eval(job.raw_data)
                 except (ValueError, SyntaxError, TypeError):
                     raw_data = {}
-        return JobPayload(
+        payload = JobPayload(
             **values, source_name=job.source.name, location_raw=job.location,
             raw_data=raw_data if isinstance(raw_data, dict) else {},
         )
+        if job.source.name == "BNE":
+            bne_source = self.source_registry.get_source("BNE")
+            offer_id = str(raw_data.get("id") or "")
+            if not offer_id.isdecimal():
+                offer_id = urlparse(job.url).path.rstrip("/").rsplit("/", 1)[-1]
+            if bne_source and offer_id.isdecimal():
+                payload.url = bne_source.build_offer_url(offer_id)
+        return payload
 
     async def _dispatch_pending(
         self,
@@ -343,6 +375,8 @@ class JobSchedulerRunner:
                 continue
             attempted_ids.add(job.id)
             payload = self._payload_from_job(job)
+            if payload.url != job.url:
+                await self.repo.update_job(job.id, url=payload.url)
             if self.job_filter and not self.job_filter(payload):
                 await self.repo.update_job(job.id, notification_eligible=False)
                 continue

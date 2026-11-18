@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 class BNESource(BaseJobSource):
     """Conector para Bolsa Nacional de Empleo (BNE) mediante API JSON pública."""
 
-    def __init__(self, poll_interval_minutes: int = 20) -> None:
+    def __init__(
+        self, poll_interval_minutes: int = 20, postulante_id: str | None = None
+    ) -> None:
         super().__init__(
             name="BNE",
             base_url="https://www.bne.cl",
@@ -37,9 +39,9 @@ class BNESource(BaseJobSource):
             max_retries=3,
             rate_limit_delay=1.5,
         )
-        # Endpoint observado en la busqueda publica oficial (noviembre de 2026).
-        self.base_url = "https://bne.gob.cl"
-        self.api_url = f"{self.base_url}/api/ofertas/busqueda"
+        # El endpoint de búsqueda y la URL pública de detalle usan hosts distintos.
+        self.api_url = "https://bne.gob.cl/api/ofertas/busqueda"
+        self.postulante_id = postulante_id
         self.search_configs: list[dict[str, Any]] = [
             {"idsRegion": [391], "idsComuna": [1283, 1303]},
             {"textoBusqueda": "remoto"},
@@ -144,7 +146,7 @@ class BNESource(BaseJobSource):
             offer_id = str(item.get("id") or "")
             if not offer_id.isdecimal() or int(offer_id) <= 0:
                 return None
-            job_url = f"{self.base_url}/ofertas/{offer_id}"
+            job_url = self.build_offer_url(offer_id)
 
             raw_payload = {
                 "title": title,
@@ -174,3 +176,13 @@ class BNESource(BaseJobSource):
         except Exception as err:
             logger.debug("[%s] Error parseando item BNE: %s", self.name, err)
             return None
+
+    def build_offer_url(self, offer_id: str | int) -> str:
+        """Construye la URL canónica de detalle BNE con el contexto del postulante."""
+        original_id = str(offer_id).strip()
+        if not original_id.isdecimal() or int(original_id) <= 0:
+            raise ValueError("El ID de oferta BNE debe ser numérico y positivo")
+        url = f"https://www.bne.cl/ofertas/{original_id}"
+        if self.postulante_id:
+            url += f"?idPostulante={self.postulante_id}"
+        return url

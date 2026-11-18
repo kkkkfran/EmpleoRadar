@@ -94,6 +94,29 @@ async def test_recovery_only_recent_real_publication_and_no_unknown_flood(repo):
     assert callback.await_count == 2
 
 
+async def test_publication_start_date_is_inclusive_and_rejects_older_or_undated_jobs(repo):
+    start_date = NOW.date() - timedelta(days=1)
+    source = ControlledSource([
+        job("before-start", datetime.combine(start_date - timedelta(days=1), datetime.min.time())),
+        job("start-date", datetime.combine(start_date, datetime.min.time())),
+        job("unknown-date", None),
+    ])
+    callback = AsyncMock(return_value=123)
+    async with running(
+        repo, [source], callback, publication_start_date=start_date,
+    ) as runner:
+        assert await runner.initialize_baseline() == 1
+        assert await runner.scan_and_dispatch_cycle() == 0
+
+    assert [call.args[0].external_id for call in callback.await_args_list] == ["start-date"]
+    saved = await repo.search_jobs("start-date")
+    assert len(saved) == 1
+    assert saved[0].published_at.date() == start_date
+    unknown = await repo.search_jobs("unknown-date")
+    assert len(unknown) == 1
+    assert unknown[0].notification_eligible is False
+
+
 async def test_failed_notification_retried_after_listing_disappears_and_restart(repo):
     source = ControlledSource([job("retry")])
     callback = AsyncMock(side_effect=RuntimeError("Discord no disponible"))

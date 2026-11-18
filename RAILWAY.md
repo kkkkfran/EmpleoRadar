@@ -21,10 +21,12 @@ No es necesario un dominio público para que el bot se conecte a Discord. Railwa
 | `DISCORD_OWNER_ID` | Tu ID ya exportado |
 | `DISCORD_CHANNEL_INFORMATICA_ID` | `1561207531659985106` |
 | `DISCORD_CHANNEL_CHILLAN_ID` | `1561217778722283613` |
+| `BNE_POSTULANTE_ID` | ID de postulante BNE; opcional, para abrir las ofertas con la sesión correspondiente |
 | `DATABASE_URL` | `sqlite+aiosqlite:////app/data/empleoradar.db` |
 | `RAILWAY_RUN_UID` | `0` |
 | `POLL_INTERVAL_MINUTES` | `2` |
 | `RECOVERY_DAYS` | `4` |
+| `PUBLICATION_START_DATE` | `2026-11-16` (inclusiva) |
 | `MAX_CONCURRENT_REQUESTS` | `3` |
 | `REQUEST_TIMEOUT_SECONDS` | `30` |
 | `SOURCE_TIMEOUT_SECONDS` | `180` |
