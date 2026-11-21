@@ -99,7 +99,12 @@ async def main() -> None:
     health_monitor = HealthMonitor(repo, source_registry)
 
     # Asegurar registro inicial del propietario
-    await repo.get_or_create_owner(settings.discord_owner_id)
+    owner = await repo.get_or_create_owner(settings.discord_owner_id)
+    preferences = await repo.get_or_create_preferences(owner.id)
+    if preferences.channel_informatica_id:
+        settings.discord_channel_informatica_id = preferences.channel_informatica_id
+    if preferences.channel_chillan_id:
+        settings.discord_channel_chillan_id = preferences.channel_chillan_id
 
     # 6. Cliente del Bot de Discord
     bot = EmpleoRadarBot(

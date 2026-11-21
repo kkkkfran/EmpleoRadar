@@ -1,7 +1,7 @@
 """Conector oficial para ChileTrabajos (https://www.chiletrabajos.cl/).
 
-Consulta las páginas públicas de vacantes laborales enfocadas en Informática,
-Región de Ñuble (Chillán) y Región del Biobío (Concepción y comunas aledañas).
+Consulta listados públicos de vacantes y búsquedas remotas. El enrutamiento posterior
+limita las alertas presenciales e híbridas a Chillán y Chillán Viejo.
 """
 
 from __future__ import annotations

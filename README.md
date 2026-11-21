@@ -2,7 +2,7 @@
 
 **Bot de Discord personal para detección inteligente, filtrado y postulación asistida a ofertas laborales.**
 
-Python 3.12, SQLite persistente (SQLAlchemy 2.x), sondeo cada dos minutos, deduplicación y reintentos de avisos fallidos. Al arrancar recupera ofertas fechadas de los últimos cuatro días.
+Python 3.12, SQLite persistente (SQLAlchemy 2.x), sondeo periódico configurable, deduplicación y reintentos de avisos fallidos. El barrido global usa `POLL_INTERVAL_MINUTES`; cada fuente respeta además su propio intervalo. Al arrancar recupera ofertas fechadas de los últimos cuatro días.
 
 **Despliegue en Railway:** sigue [RAILWAY.md](RAILWAY.md). Incluye variables, volumen, recuperación del historial y diagnóstico.
 
@@ -98,7 +98,7 @@ Todos los comandos están protegidos mediante verificación estricta de permisos
 | `/empleo historial` | Muestra las postulaciones tramitadas y completadas. |
 | `/empleo pausa` | Pausa temporalmente el envío de notificaciones automáticas. |
 | `/empleo reanudar` | Reactiva las notificaciones de nuevas vacantes. |
-| `/empleo configurar` | Ajusta sueldo mínimo esperado y exclusión de prácticas. |
+| `/empleo configurar` | Ajusta sueldo mínimo, exclusión de prácticas y puntaje mínimo para avisos. |
 | `/empleo salud` | Diagnóstico técnico de la base de datos, memoria y conectividad. |
 
 ---

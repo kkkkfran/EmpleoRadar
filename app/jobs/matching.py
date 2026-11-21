@@ -6,6 +6,7 @@ import re
 
 from app.database.models import ContractType, WorkModality
 from app.jobs.models import JobMatchCriteria, JobMatchResult, JobPayload
+from app.jobs.normalizer import is_internship_offer
 from app.jobs.regions_data import COMUNAS_NUBLE, normalize_text_match
 
 # Palabras clave por defecto si no están configuradas
@@ -66,12 +67,26 @@ def evaluate_job_match(
     Calcula una puntuación transparente de 0 a 100 con desglose y explicaciones claras.
     """
     # 1. Reglas excluyentes obligatorias
-    if criteria.exclude_internships and job.is_internship:
+    if criteria.exclude_internships and (
+        job.is_internship or is_internship_offer(job.title, job.description)
+    ):
         return JobMatchResult(
             score=0,
             is_excluded=True,
             exclusion_reason="Oferta descartada automáticamente por ser práctica profesional o memoria.",
             summary="Práctica profesional / Memoria excluida según configuración.",
+        )
+
+    salary_values = [value for value in (job.salary_min, job.salary_max) if value is not None]
+    if criteria.min_salary and salary_values and max(salary_values) < criteria.min_salary:
+        return JobMatchResult(
+            score=0,
+            is_excluded=True,
+            exclusion_reason=(
+                f"Sueldo publicado inferior al mínimo configurado "
+                f"(${criteria.min_salary:,} CLP)."
+            ),
+            summary="Oferta excluida por sueldo inferior al mínimo configurado.",
         )
 
     title_desc = f"{job.title} {job.description or ''}"
@@ -216,14 +231,10 @@ def evaluate_job_match(
     sal_score = 0.5
     if job.salary_min or job.salary_max:
         sal_val = job.salary_max or job.salary_min or 0
-        if criteria.min_salary and sal_val < criteria.min_salary:
-            sal_score = 0.2
-            missing.append(f"Sueldo indicado (${sal_val:,}) inferior a pretensión mínima.")
-        else:
-            sal_score = 1.0
-            reasons.append(
-                f"Remuneración informada: ${sal_val:,} CLP ({job.salary_type or 'no especificado'})."
-            )
+        sal_score = 1.0
+        reasons.append(
+            f"Remuneración informada: ${sal_val:,} CLP ({job.salary_type or 'no especificado'})."
+        )
     else:
         # No se descarta por no indicar sueldo
         sal_score = 0.6

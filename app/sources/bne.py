@@ -56,7 +56,7 @@ class BNESource(BaseJobSource):
         session: aiohttp.ClientSession,
         criteria: Any | None = None,
     ) -> list[JobPayload]:
-        """Consulta ofertas públicas en BNE para Informática y Región de Ñuble / Biobío."""
+        """Consulta vacantes públicas de Chillán, Chillán Viejo y búsquedas remotas."""
         all_jobs: list[JobPayload] = []
         seen_codes: set[str] = set()
         successful_requests = 0

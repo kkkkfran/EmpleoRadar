@@ -115,6 +115,7 @@ def criteria_from_db_preferences(db_prefs: Any) -> JobMatchCriteria:
         exclude_internships=getattr(db_prefs, "exclude_internships", True),
         exclude_thesis=getattr(db_prefs, "exclude_thesis", True),
         min_salary=getattr(db_prefs, "min_salary", None),
+        min_score_notify=getattr(db_prefs, "min_score_notify", 30),
         preferred_modality=getattr(db_prefs, "preferred_modality", None),
         preferred_contract=getattr(db_prefs, "preferred_contract", None),
         weight_location=getattr(db_prefs, "weight_location", 0.25),

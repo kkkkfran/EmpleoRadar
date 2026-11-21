@@ -7,7 +7,6 @@ import re
 
 from app.database.models import WorkModality
 from app.jobs.models import JobPayload
-from app.jobs.normalizer import is_internship_offer
 from app.jobs.regions_data import REGIONES_CHILE, find_comuna_and_region, normalize_text_match
 
 LOCAL_COMUNAS = {"chillan", "chillan viejo"}
@@ -158,8 +157,6 @@ def is_accessible_chillan_job(job: JobPayload) -> bool:
 
 def route_job(job: JobPayload, it_channel_id: int, chillan_channel_id: int) -> int | None:
     """Devuelve un canal solo cuando la oferta cumple categoría y ubicación."""
-    if job.is_internship or is_internship_offer(job.title, job.description):
-        return None
     if is_it_job(job) and is_allowed_it_location(job):
         return it_channel_id
     if is_accessible_chillan_job(job):

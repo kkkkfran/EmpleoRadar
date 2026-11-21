@@ -50,6 +50,7 @@ class JobMatchCriteria(BaseModel):
     exclude_internships: bool = True
     exclude_thesis: bool = True
     min_salary: int | None = None
+    min_score_notify: int = Field(default=30, ge=0, le=100)
     preferred_modality: str | None = None
     preferred_contract: str | None = None
 

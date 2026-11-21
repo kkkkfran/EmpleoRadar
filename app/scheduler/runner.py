@@ -82,6 +82,7 @@ class JobSchedulerRunner:
         self._polling_lock = asyncio.Lock()
         self._baseline_ready = False
         self._initialized_sources: set[str] = set()
+        self._source_last_attempt_at: dict[str, datetime] = {}
         self._cycle_tasks: set[asyncio.Task] = set()
         self.last_cycle_started_at: datetime | None = None
         self.last_cycle_completed_at: datetime | None = None
@@ -109,7 +110,7 @@ class JobSchedulerRunner:
             timeout=aiohttp.ClientTimeout(total=self.request_timeout_seconds)
         )
         self._scheduler.add_job(
-            self.scan_and_dispatch_cycle,
+            self.scan_due_sources_cycle,
             "interval",
             minutes=max(1, self.poll_interval_minutes),
             id="unified_job_scanner",
@@ -120,7 +121,10 @@ class JobSchedulerRunner:
         )
         self._scheduler.start()
         self._is_running = True
-        logger.info("Sondeo iniciado cada %d minutos.", self.poll_interval_minutes)
+        logger.info(
+            "Planificador iniciado; barrido global cada %d minutos y frecuencia por fuente.",
+            self.poll_interval_minutes,
+        )
 
     async def stop(self) -> None:
         """Cancela consultas pendientes antes de cerrar HTTP y la base de datos."""
@@ -148,10 +152,23 @@ class JobSchedulerRunner:
         return await self.scan_and_dispatch_cycle(since_date=since_date)
 
     async def scan_and_dispatch_cycle(self, since_date: datetime | None = None) -> int:
+        """Consulta todas las fuentes activas; se usa al iniciar y en sincronizaciones manuales."""
         await self.source_registry.sync_with_database()
         return await self._dispatch_jobs_for_sources(
             self.source_registry.get_active_sources(), since_date=since_date
         )
+
+    async def scan_due_sources_cycle(self) -> int:
+        """Consulta solo las fuentes cuyo intervalo propio ya venció."""
+        await self.source_registry.sync_with_database()
+        now = _now()
+        due_sources = []
+        for source in self.source_registry.get_active_sources():
+            last_attempt = self._source_last_attempt_at.get(source.name)
+            interval = max(1, source.poll_interval_minutes)
+            if last_attempt is None or (now - last_attempt).total_seconds() >= interval * 60:
+                due_sources.append(source)
+        return await self._dispatch_jobs_for_sources(due_sources)
 
     async def _collect_source(self, source: BaseJobSource, criteria: JobMatchCriteria) -> _SourceResult:
         async with self.semaphore:
@@ -191,6 +208,8 @@ class JobSchedulerRunner:
             try:
                 now = _now()
                 self.last_cycle_started_at = now
+                for source in sources:
+                    self._source_last_attempt_at[source.name] = now
                 cutoff = now - timedelta(days=self.recovery_days)
                 if self.publication_start_date is not None:
                     start_cutoff = datetime.combine(
@@ -382,6 +401,14 @@ class JobSchedulerRunner:
                 continue
             match = evaluate_job_match(payload, criteria)
             if match.is_excluded:
+                continue
+            if match.score < criteria.min_score_notify:
+                logger.debug(
+                    "Aviso #%d omitido: compatibilidad %d/100 bajo el mínimo configurado %d/100.",
+                    job.id,
+                    match.score,
+                    criteria.min_score_notify,
+                )
                 continue
             try:
                 message_id = await self.notification_callback(payload, match, job.id)

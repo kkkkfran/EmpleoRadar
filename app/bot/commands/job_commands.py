@@ -123,7 +123,7 @@ class EmpleoCog(
     @app_commands.choices(
         tipo=[
             app_commands.Choice(
-                name="Informática general (Chile / Remoto / Ñuble / Biobío)",
+                name="Informática (Chillán / Chillán Viejo / Remoto desde Chile)",
                 value="informatica",
             ),
             app_commands.Choice(
@@ -145,6 +145,12 @@ class EmpleoCog(
 
         # Si se especificó un canal y un tipo para actualizar
         if canal:
+            if tipo is None:
+                await interaction.followup.send(
+                    "Elige el tipo de canal: Informática o Chillán / otros empleos.",
+                    ephemeral=True,
+                )
+                return
             target_channel = canal
             if tipo == "informatica":
                 await self.repo.update_preferences(
@@ -158,11 +164,7 @@ class EmpleoCog(
                     channel_chillan_id=target_channel.id,
                 )
                 self.bot.settings.discord_channel_chillan_id = target_channel.id
-            else:
-                await self.repo.update_preferences(
-                    owner_id=db_owner.id,
-                    notification_channel_id=target_channel.id,
-                )
+            prefs = await self.repo.get_or_create_preferences(db_owner.id)
 
         inf_id = (
             getattr(prefs, "channel_informatica_id", None)
@@ -189,7 +191,8 @@ class EmpleoCog(
                 "• **Filtro estricto:** Chillán / Chillán Viejo o remoto para Chile, sin exigir profesión ni título técnico superior.\n\n"
                 "🚫 **Mensajes Privados (MD):** Desactivados estrictamente. Todas las alertas van directo a sus canales.\n"
                 f"💡 Al iniciar recupera los últimos {self.bot.settings.recovery_days} días; "
-                f"luego revisa cada {self.bot.settings.poll_interval_minutes} minutos."
+                f"el barrido global se ejecuta cada {self.bot.settings.poll_interval_minutes} minutos "
+                "y cada portal respeta su propio intervalo."
             ),
             color=discord.Color.blue(),
         )
@@ -267,7 +270,7 @@ class EmpleoCog(
         embed.add_field(name="💻 Canal Informática", value=f"<#{inf_id}>", inline=True)
         embed.add_field(name="🛍️ Canal Chillán Retail/Otros", value=f"<#{chi_id}>", inline=True)
         embed.add_field(
-            name="📍 Región Foco", value="Ñuble y Biobío (Chillán y Concepción)", inline=True
+            name="📍 Zonas de aviso", value="Chillán, Chillán Viejo y remoto desde Chile", inline=True
         )
         embed.add_field(
             name="📈 Ofertas en BD", value=f"Total: {stats.get('total', 0)}", inline=True
@@ -699,6 +702,7 @@ class EmpleoCog(
     @app_commands.describe(
         sueldo_minimo="Sueldo líquido mínimo esperado en CLP (ej: 1000000)",
         excluir_practicas="Si se deben excluir prácticas profesionales (True/False)",
+        puntaje_minimo="Puntaje mínimo de compatibilidad para recibir avisos (0 a 100)",
     )
     @app_commands.check(owner_check)
     async def configurar(
@@ -706,6 +710,7 @@ class EmpleoCog(
         interaction: discord.Interaction,
         sueldo_minimo: int | None = None,
         excluir_practicas: bool | None = None,
+        puntaje_minimo: app_commands.Range[int, 0, 100] | None = None,
     ) -> None:
         db_owner = await self.repo.get_or_create_owner(interaction.user.id)
         update_args = {}
@@ -713,6 +718,8 @@ class EmpleoCog(
             update_args["min_salary"] = sueldo_minimo
         if excluir_practicas is not None:
             update_args["exclude_internships"] = excluir_practicas
+        if puntaje_minimo is not None:
+            update_args["min_score_notify"] = puntaje_minimo
 
         if update_args:
             await self.repo.update_preferences(owner_id=db_owner.id, **update_args)

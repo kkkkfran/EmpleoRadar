@@ -58,7 +58,7 @@ Si comienzas con una base vacía o una copia desactualizada, el bot no puede con
 - Las ofertas sin fecha del inventario inicial se guardan sin publicarse: no se inventa que sean recientes. Las nuevas ofertas detectadas después sí pueden avisarse aunque el portal omita su fecha.
 - Los envíos fallidos quedan pendientes en SQLite y se reintentan dentro de la ventana de recuperación, aunque desaparezcan del listado del portal.
 - Solo se marca una oferta como notificada tras obtener el ID del mensaje de Discord. Se reparan marcas del arranque silencioso antiguo únicamente si no hay evidencia de entrega y la oferta aún entra en la ventana.
-- Las fuentes se consultan con concurrencia limitada y límites de tiempo. Una fuente caída no impide procesar las demás. El sondeo es cada dos minutos; no equivale a entrega instantánea ni garantiza capturar ofertas que desaparecieron durante la caída.
+- Las fuentes se consultan con concurrencia limitada y límites de tiempo. Una fuente caída no impide procesar las demás. El barrido global usa `POLL_INTERVAL_MINUTES` y cada portal respeta su intervalo configurado; no equivale a entrega instantánea ni garantiza capturar ofertas que desaparecieron durante una caída.
 - Informática y otros empleos usan Chillán/Chillán Viejo o remoto compatible con Chile. El segundo canal excluye cargos que exigen una profesión. Se conservan las exclusiones de prácticas y memorias.
 
 ## Fuentes y diagnóstico
