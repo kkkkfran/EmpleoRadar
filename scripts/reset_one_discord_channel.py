@@ -72,12 +72,27 @@ async def main(args: argparse.Namespace) -> None:
             raise SystemExit("Refusing: bot needs Manage Messages to empty this channel.")
 
         messages = [message async for message in channel.history(limit=None, oldest_first=True)]
+        configured_role = (
+            "Informática"
+            if channel.id == settings.discord_channel_informatica_id
+            else "Chillán / Otros empleos"
+        )
         summary = {
             "guild": guild.name,
             "guild_id": guild.id,
             "channel": channel.name,
             "channel_id": channel.id,
+            "configured_role": configured_role,
+            "is_empleoradar_publication_channel": channel.id in allowed_channel_ids,
             "message_count": len(messages),
+            "oldest_message_at": messages[0].created_at.isoformat() if messages else None,
+            "newest_message_at": messages[-1].created_at.isoformat() if messages else None,
+            "bot_permissions": {
+                "view_channel": permissions.view_channel,
+                "read_message_history": permissions.read_message_history,
+                "manage_messages": permissions.manage_messages,
+                "send_messages": permissions.send_messages,
+            },
             "start_date_inclusive": args.start_date,
             "mode": "execute" if executing else "preview",
         }

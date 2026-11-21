@@ -1,42 +1,86 @@
-import os
+"""Envía una única vista previa Components V2 usando una oferta ya registrada."""
+
+import asyncio
 
 import discord
-from discord.ui import ActionRow, Button, LayoutView, Separator, TextDisplay
-from dotenv import load_dotenv
 
-load_dotenv()
+from app.bot.views.job_views import create_job_card_layout
+from app.config import get_settings
+from app.database.migrations.runner import run_migrations
+from app.database.models import WorkModality
+from app.database.repository import Database, Repository
+from app.jobs.matching import evaluate_job_match
+from app.jobs.models import JobPayload
+from app.jobs.routing import route_job
+from app.profile.preferences import criteria_from_db_preferences
 
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-CHANNEL_IT = int(os.getenv("DISCORD_CHANNEL_INFORMATICA_ID", "1561207531659985106"))
 
-client = discord.Client(intents=discord.Intents.default())
+async def main() -> None:
+    settings = get_settings()
+    database = Database(settings.database_url)
+    await database.create_tables()
+    await run_migrations(database)
+    repo = Repository(database)
+    jobs = await repo.get_recent_jobs(limit=100)
+    owner = await repo.get_or_create_owner(settings.discord_owner_id)
+    preferences = await repo.get_or_create_preferences(owner.id)
+    criteria = criteria_from_db_preferences(preferences)
+    job = None
+    match = None
+    for candidate in jobs:
+        candidate.modality = WorkModality(candidate.modality)
+        fields = {
+            name: getattr(candidate, name)
+            for name in JobPayload.model_fields
+            if name not in {"source_name", "location_raw", "raw_data"}
+            and hasattr(candidate, name)
+        }
+        payload = JobPayload(
+            **fields,
+            source_name=candidate.source.name if candidate.source else "Fuente",
+            location_raw=candidate.location,
+        )
+        candidate_match = evaluate_job_match(payload, criteria)
+        if (
+            not candidate_match.is_excluded
+            and candidate_match.score >= criteria.min_score_notify
+            and route_job(
+                payload,
+                settings.discord_channel_informatica_id,
+                settings.discord_channel_chillan_id,
+            )
+            == settings.discord_channel_informatica_id
+        ):
+            job = candidate
+            match = candidate_match
+            break
+    if job is None:
+        await database.close()
+        raise RuntimeError("No hay ofertas TI compatibles registradas para construir la prueba")
 
-@client.event
-async def on_ready():
-    channel = client.get_channel(CHANNEL_IT) or await client.fetch_channel(CHANNEL_IT)
-    print("Testing Components V2 LayoutView in channel:", channel)
-
-    view = LayoutView()
-    view.add_item(TextDisplay("### 💼 Desarrollador Full Stack Python / React\n**Empresa:** Tech Soluciones • **Ubicación:** Concepción, Biobío\n**Modalidad:** Remoto • **Contrato:** Indefinido"))
-    view.add_item(Separator(visible=True, spacing=discord.SeparatorSpacing.small))
-    view.add_item(TextDisplay("💰 **Remuneración:** $1.800.000 - $2.400.000 Líquido\n⏳ **Experiencia requerida:** 2+ años en FastAPI, React y PostgreSQL\n🎯 **Compatibilidad:** 92/100 (Alta prioridad en Concepción y Python)"))
-    view.add_item(Separator(visible=True, spacing=discord.SeparatorSpacing.small))
-    view.add_item(TextDisplay("-# Fuente: ChileTrabajos | ID #999 • EmpleoRadar • 18-10-2026 01:45"))
-
-    row = ActionRow(
-        Button(label="Ver oferta", style=discord.ButtonStyle.link, url="https://chiletrabajos.cl"),
-        Button(label="Preparar postulación", style=discord.ButtonStyle.primary, custom_id="test_postular"),
-        Button(label="Guardar oferta", style=discord.ButtonStyle.secondary, custom_id="test_guardar")
+    job.title = f"[PRUEBA VISUAL] {job.title}"
+    job.description = (
+        "Este es el formato nuevo de EmpleoRadar. Los botones cambian y guardan el estado "
+        "sin borrar la publicación.\n\n" + (job.description or "")
     )
-    view.add_item(row)
+    client = discord.Client(intents=discord.Intents.default())
+
+    @client.event
+    async def on_ready() -> None:
+        channel = client.get_channel(settings.discord_channel_informatica_id)
+        if channel is None:
+            channel = await client.fetch_channel(settings.discord_channel_informatica_id)
+        message = await channel.send(
+            view=create_job_card_layout(job, match_result=match, job_id=job.id)
+        )
+        print(f"Mensaje Components V2 de prueba enviado: {message.id}")
+        await client.close()
 
     try:
-        msg = await channel.send(view=view)
-        print("Components V2 message sent successfully! ID:", msg.id)
-    except Exception as e:
-        print("Error sending Components V2:", e)
+        await client.start(settings.discord_bot_token)
+    finally:
+        await database.close()
 
-    await client.close()
 
 if __name__ == "__main__":
-    client.run(TOKEN)
+    asyncio.run(main())
