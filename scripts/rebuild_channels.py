@@ -39,9 +39,13 @@ async def main(args):
                 [s for s in registry.get_active_sources() if s.name != "BNE"],
             )
         async with db.session() as session:
+            start = max(
+                args.start,
+                datetime.combine(settings.publication_start_date, datetime.min.time()),
+            )
             jobs = (await session.execute(
                 select(Job).options(selectinload(Job.source))
-                .where(Job.published_at >= args.start, Job.published_at < args.end)
+                .where(Job.published_at >= start, Job.published_at < args.end)
                 .order_by(Job.published_at, Job.id)
             )).scalars().all()
             unknown_dates = (await session.execute(

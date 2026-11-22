@@ -78,7 +78,7 @@ class EmpleoRadarBot(commands.Bot):
         )
         activity = discord.Activity(
             type=discord.ActivityType.watching,
-            name="ofertas en Chillán e Informática",
+            name="ofertas en Chillán, Temuco e Informática",
         )
         await self.change_presence(activity=activity)
 
@@ -86,7 +86,7 @@ class EmpleoRadarBot(commands.Bot):
         """Determina el canal específico de Discord según el tipo de oferta y ubicación.
 
         • Informática general -> Canal 1561207531659985106
-        • Otros empleos dentro de Chillán (retail, tiendas, ropa, reponedor, etc.) -> Canal 1561217778722283613
+        • Otros empleos dentro de Chillán o Temuco -> Canal 1561217778722283613
         """
         return route_job(
             job,

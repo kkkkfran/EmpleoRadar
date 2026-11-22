@@ -1,7 +1,7 @@
 """Conector oficial para ChileTrabajos (https://www.chiletrabajos.cl/).
 
 Consulta listados públicos de vacantes y búsquedas remotas. El enrutamiento posterior
-limita las alertas presenciales e híbridas a Chillán y Chillán Viejo.
+limita las alertas presenciales e híbridas a Chillán, Chillán Viejo y Temuco.
 """
 
 from __future__ import annotations

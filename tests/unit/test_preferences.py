@@ -17,8 +17,8 @@ def test_invalid_json_type_uses_list_defaults():
     assert criteria.preferred_regions
 
 
-def test_new_preferences_focus_on_chillan_and_chillan_viejo():
+def test_new_preferences_focus_on_chillan_chillan_viejo_and_temuco():
     criteria = build_default_match_criteria()
-    assert criteria.preferred_regions == ["Ñuble"]
-    assert criteria.preferred_comunas == ["Chillán", "Chillán Viejo"]
-    assert criteria.priority_comunas == ["Chillán", "Chillán Viejo"]
+    assert criteria.preferred_regions == ["Ñuble", "Araucanía"]
+    assert criteria.preferred_comunas == ["Chillán", "Chillán Viejo", "Temuco"]
+    assert criteria.priority_comunas == ["Chillán", "Chillán Viejo", "Temuco"]

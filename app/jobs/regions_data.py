@@ -1,7 +1,6 @@
 """Datos geográficos oficiales de Chile: Regiones y Comunas.
 
-Enfocado prioritariamente en la Región de Ñuble y sus 21 comunas oficiales,
-con soporte completo para todas las regiones de Chile para futura expansión.
+Prioriza Chillán, Chillán Viejo y Temuco, con el catálogo de regiones y comunas de Chile.
 """
 
 from __future__ import annotations
@@ -35,6 +34,7 @@ COMUNAS_NUBLE: list[str] = [
 COMUNAS_PRIORITARIAS_DEFAULT: list[str] = [
     "Chillán",
     "Chillán Viejo",
+    "Temuco",
 ]
 
 # Mapa completo de Regiones de Chile y sus Comunas

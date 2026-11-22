@@ -1,7 +1,7 @@
 """Pruebas unitarias para el enrutamiento de canales de EmpleoRadar.
 
-Canal 1 (1561207531659985106): Informática en Chillán/Chillán Viejo o remoto desde Chile.
-Canal 2 (1561217778722283613): Otros empleos en Chillán (Retail, Falabella, Ripley, Jumbo, Paris, sin título universitario).
+Canal 1 (1561207531659985106): Informática en Chillán/Chillán Viejo/Temuco o remoto desde Chile.
+Canal 2 (1561217778722283613): Otros empleos en Chillán/Temuco (Retail, sin título universitario).
 """
 
 from unittest.mock import MagicMock

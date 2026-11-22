@@ -10,7 +10,7 @@ Python 3.12, SQLite persistente (SQLAlchemy 2.x), sondeo periódico configurable
 
 ## 🗺️ Cobertura Geográfica y Perfil
 
-- **Ubicación de alertas:** solo Chillán y Chillán Viejo para empleos presenciales o híbridos; también remoto disponible desde Chile. Una ubicación genérica «Ñuble» no basta.
+- **Ubicación de alertas:** Chillán, Chillán Viejo y Temuco para empleos presenciales o híbridos; también remoto disponible desde Chile. Una región genérica sin comuna no basta.
 - **Dos canales:** informática (incluye técnicos y analistas TI) y otros empleos sin exigir profesión ni título técnico superior (bodega, retail, ayudantes, restaurantes, etc.).
 - **Áreas de especialidad:** Ingeniería en Informática, Desarrollo Backend, Full Stack, Web, Soporte TI, Redes, Infraestructura, Cloud, DevOps, Bases de Datos, Automatización y Ciberseguridad.
 - **Filtro inteligente:** Exclusión automática de prácticas profesionales y memorias por defecto (configurable). No descarta vacantes por falta de sueldo publicado.
@@ -144,7 +144,7 @@ DATABASE_URL=sqlite+aiosqlite:///data/empleoradar.db
 TIMEZONE=America/Santiago
 LOG_LEVEL=INFO
 POLL_INTERVAL_MINUTES=2
-PUBLICATION_START_DATE=2026-11-16
+PUBLICATION_START_DATE=2026-11-18
 APPLICATION_REQUIRE_CONFIRMATION=true
 ```
 

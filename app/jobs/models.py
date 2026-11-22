@@ -42,9 +42,11 @@ class JobPayload(BaseModel):
 class JobMatchCriteria(BaseModel):
     """Criterios para evaluar la compatibilidad de una vacante."""
 
-    preferred_regions: list[str] = Field(default_factory=lambda: ["Ñuble"])
+    preferred_regions: list[str] = Field(default_factory=lambda: ["Ñuble", "Araucanía"])
     preferred_comunas: list[str] = Field(default_factory=list)
-    priority_comunas: list[str] = Field(default_factory=lambda: ["Chillán", "Chillán Viejo"])
+    priority_comunas: list[str] = Field(
+        default_factory=lambda: ["Chillán", "Chillán Viejo", "Temuco"]
+    )
     interest_areas: list[str] = Field(default_factory=list)
     interest_keywords: list[str] = Field(default_factory=list)
     exclude_internships: bool = True

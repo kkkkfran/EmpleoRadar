@@ -66,9 +66,9 @@ DEFAULT_INTEREST_KEYWORDS: list[str] = [
 
 
 def build_default_match_criteria() -> JobMatchCriteria:
-    """Construye las preferencias iniciales para Chillán, Chillán Viejo e Informática."""
+    """Construye las preferencias iniciales para Chillán, Chillán Viejo y Temuco."""
     return JobMatchCriteria(
-        preferred_regions=["Ñuble"],
+        preferred_regions=["Ñuble", "Araucanía"],
         preferred_comunas=DEFAULT_PRIORITY_COMUNAS,
         priority_comunas=DEFAULT_PRIORITY_COMUNAS,
         interest_areas=DEFAULT_AREAS,
@@ -98,7 +98,9 @@ def criteria_from_db_preferences(db_prefs: Any) -> JobMatchCriteria:
         except Exception:
             return list(default)
 
-    regions = parse_json_list(getattr(db_prefs, "preferred_regions", None), ["Ñuble"])
+    regions = parse_json_list(
+        getattr(db_prefs, "preferred_regions", None), ["Ñuble", "Araucanía"]
+    )
     comunas = parse_json_list(getattr(db_prefs, "preferred_comunas", None), DEFAULT_PRIORITY_COMUNAS)
     priority_comunas = parse_json_list(
         getattr(db_prefs, "priority_comunas", None), DEFAULT_PRIORITY_COMUNAS

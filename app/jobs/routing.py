@@ -1,4 +1,4 @@
-﻿"""Reglas de los canales: Chillán/Chillán Viejo y remoto disponible desde Chile."""
+﻿"""Reglas de los canales: Chillán, Chillán Viejo, Temuco y remoto desde Chile."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from app.database.models import WorkModality
 from app.jobs.models import JobPayload
 from app.jobs.regions_data import REGIONES_CHILE, find_comuna_and_region, normalize_text_match
 
-LOCAL_COMUNAS = {"chillan", "chillan viejo"}
+LOCAL_COMUNAS = {"chillan", "chillan viejo", "temuco"}
 IT_TITLE_TERMS = (
     "informatica", "informatico", "software", "desarrollador", "desarrolladora",
     "developer", "programador", "programadora", "programming", "backend", "frontend",
@@ -120,7 +120,7 @@ def is_remote_available_from_chile(job: JobPayload) -> bool:
     return False
 
 
-def is_allowed_it_location(job: JobPayload) -> bool:
+def is_allowed_location(job: JobPayload) -> bool:
     if job.modality == WorkModality.REMOTO:
         return is_remote_available_from_chile(job)
     if job.comuna:
@@ -146,9 +146,9 @@ def requires_professional_qualification(job: JobPayload) -> bool:
     return False
 
 
-def is_accessible_chillan_job(job: JobPayload) -> bool:
+def is_accessible_local_job(job: JobPayload) -> bool:
     return (
-        is_allowed_it_location(job)
+        is_allowed_location(job)
         and bool(GENERAL_ROLE_PATTERN.search(normalize_text_match(job.title)))
         and not requires_professional_qualification(job)
         and not is_it_job(job)
@@ -157,8 +157,8 @@ def is_accessible_chillan_job(job: JobPayload) -> bool:
 
 def route_job(job: JobPayload, it_channel_id: int, chillan_channel_id: int) -> int | None:
     """Devuelve un canal solo cuando la oferta cumple categoría y ubicación."""
-    if is_it_job(job) and is_allowed_it_location(job):
+    if is_it_job(job) and is_allowed_location(job):
         return it_channel_id
-    if is_accessible_chillan_job(job):
+    if is_accessible_local_job(job):
         return chillan_channel_id
     return None

@@ -44,6 +44,7 @@ class BNESource(BaseJobSource):
         self.postulante_id = postulante_id
         self.search_configs: list[dict[str, Any]] = [
             {"idsRegion": [391], "idsComuna": [1283, 1303]},
+            {"idsRegion": [382], "idsComuna": [1245]},
             {"textoBusqueda": "remoto"},
             {"textoBusqueda": "teletrabajo"},
         ]
@@ -56,7 +57,7 @@ class BNESource(BaseJobSource):
         session: aiohttp.ClientSession,
         criteria: Any | None = None,
     ) -> list[JobPayload]:
-        """Consulta vacantes públicas de Chillán, Chillán Viejo y búsquedas remotas."""
+        """Consulta vacantes públicas de Chillán, Chillán Viejo, Temuco y búsquedas remotas."""
         all_jobs: list[JobPayload] = []
         seen_codes: set[str] = set()
         successful_requests = 0

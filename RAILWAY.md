@@ -26,7 +26,7 @@ No es necesario un dominio público para que el bot se conecte a Discord. Railwa
 | `RAILWAY_RUN_UID` | `0` |
 | `POLL_INTERVAL_MINUTES` | `2` |
 | `RECOVERY_DAYS` | `4` |
-| `PUBLICATION_START_DATE` | `2026-11-16` (inclusiva) |
+| `PUBLICATION_START_DATE` | `2026-11-18` (inclusiva) |
 | `MAX_CONCURRENT_REQUESTS` | `3` |
 | `REQUEST_TIMEOUT_SECONDS` | `30` |
 | `SOURCE_TIMEOUT_SECONDS` | `180` |
@@ -59,7 +59,7 @@ Si comienzas con una base vacía o una copia desactualizada, el bot no puede con
 - Los envíos fallidos quedan pendientes en SQLite y se reintentan dentro de la ventana de recuperación, aunque desaparezcan del listado del portal.
 - Solo se marca una oferta como notificada tras obtener el ID del mensaje de Discord. Se reparan marcas del arranque silencioso antiguo únicamente si no hay evidencia de entrega y la oferta aún entra en la ventana.
 - Las fuentes se consultan con concurrencia limitada y límites de tiempo. Una fuente caída no impide procesar las demás. El barrido global usa `POLL_INTERVAL_MINUTES` y cada portal respeta su intervalo configurado; no equivale a entrega instantánea ni garantiza capturar ofertas que desaparecieron durante una caída.
-- Informática y otros empleos usan Chillán/Chillán Viejo o remoto compatible con Chile. El segundo canal excluye cargos que exigen una profesión. Se conservan las exclusiones de prácticas y memorias.
+- Informática y otros empleos usan Chillán/Chillán Viejo, Temuco o remoto compatible con Chile. El segundo canal excluye cargos que exigen una profesión. Se conservan las exclusiones de prácticas y memorias. La fecha mínima de publicación es inclusiva: 2026-11-18.
 
 ## Fuentes y diagnóstico
 

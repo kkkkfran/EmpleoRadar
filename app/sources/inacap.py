@@ -44,6 +44,7 @@ class InacapSource(BaseJobSource):
         self.search_queries: list[dict[str, str]] = [
             {"Search[region]": "4235", "Search[township]": "231"},
             {"Search[region]": "4235", "Search[township]": "236"},
+            {"Search[region]": "10", "Search[township]": "252"},
             {"Search[remote]": "1"},
         ]
         self.recovery_days = 4

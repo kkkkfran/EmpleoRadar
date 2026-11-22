@@ -2,9 +2,6 @@
 
 from datetime import date
 
-import pytest
-from pydantic import ValidationError
-
 from app.config import Settings
 from app.sources.registry import SourceRegistry
 
@@ -26,18 +23,18 @@ def test_bne_postulante_id_is_configurable_and_wired_to_source() -> None:
     )
 
 
-def test_publication_date_cannot_be_configured_before_requested_boundary() -> None:
+def test_publication_date_enforces_requested_inclusive_floor() -> None:
     settings = Settings(
         _env_file=None,
         discord_bot_token="test-token",
         discord_owner_id=1,
     )
-    assert settings.publication_start_date == date(2026, 11, 16)
+    assert settings.publication_start_date == date(2026, 11, 18)
 
-    with pytest.raises(ValidationError):
-        Settings(
-            _env_file=None,
-            discord_bot_token="test-token",
-            discord_owner_id=1,
-            publication_start_date="2026-11-15",
-        )
+    older_value = Settings(
+        _env_file=None,
+        discord_bot_token="test-token",
+        discord_owner_id=1,
+        publication_start_date="2026-11-16",
+    )
+    assert older_value.publication_start_date == date(2026, 11, 18)

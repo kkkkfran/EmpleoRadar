@@ -170,15 +170,15 @@ async def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--channel-id", required=True, type=int)
-    parser.add_argument("--start-date", default="2026-11-16")
+    parser.add_argument("--start-date", default="2026-11-18")
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--confirm-channel-id", type=int)
     parser.add_argument("--expected-message-count", type=int)
     parser.add_argument("--archive-dir")
     arguments = parser.parse_args()
     requested_start_date = datetime.strptime(arguments.start_date, "%Y-%m-%d").date()
-    if requested_start_date < datetime(2026, 11, 16).date():
-        raise SystemExit("--start-date cannot be earlier than 2026-11-16.")
+    if requested_start_date < datetime(2026, 11, 18).date():
+        raise SystemExit("--start-date cannot be earlier than 2026-11-18.")
     try:
         asyncio.run(main(arguments))
     except discord.LoginFailure as exc:

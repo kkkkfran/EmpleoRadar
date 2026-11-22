@@ -114,7 +114,7 @@ class EmpleoCog(
     # --- /empleo canal ---
     @app_commands.command(
         name="canal",
-        description="Muestra o configura los canales de Discord para Informática y Chillán.",
+        description="Muestra o configura los canales de Discord para Informática y otros empleos.",
     )
     @app_commands.describe(
         tipo="Categoría del canal a actualizar (opcional)",
@@ -123,11 +123,11 @@ class EmpleoCog(
     @app_commands.choices(
         tipo=[
             app_commands.Choice(
-                name="Informática (Chillán / Chillán Viejo / Remoto desde Chile)",
+                name="Informática (Chillán / Chillán Viejo / Temuco / Remoto desde Chile)",
                 value="informatica",
             ),
             app_commands.Choice(
-                name="Chillán: Otros empleos (Retail / Tiendas / Sin título)",
+                name="Otros empleos (Chillán / Temuco / Retail / Sin título)",
                 value="chillan",
             ),
         ]
@@ -147,7 +147,7 @@ class EmpleoCog(
         if canal:
             if tipo is None:
                 await interaction.followup.send(
-                    "Elige el tipo de canal: Informática o Chillán / otros empleos.",
+                    "Elige el tipo de canal: Informática u otros empleos.",
                     ephemeral=True,
                 )
                 return
@@ -184,11 +184,11 @@ class EmpleoCog(
                 f"💻 **Canal 1: Informática General**\n"
                 f"• Canal asignado: <#{inf_id}> (ID: `{inf_id}`)\n"
                 "• **Cargos:** Ing. en Informática, Desarrollo (Python/Golang/.NET/JS), Soporte TI, Redes, Cloud, DevOps, etc.\n"
-                "• **Zonas:** Chillán, Chillán Viejo y vacantes remotas disponibles desde Chile.\n\n"
-                f"🛍️ **Canal 2: Otros Empleos en Chillán (Sin título)**\n"
+                "• **Zonas:** Chillán, Chillán Viejo, Temuco y vacantes remotas disponibles desde Chile.\n\n"
+                f"🛍️ **Canal 2: Otros Empleos en Chillán y Temuco (Sin título)**\n"
                 f"• Canal asignado: <#{chi_id}> (ID: `{chi_id}`)\n"
                 "• **Cargos:** Retail, tiendas (Ripley, Falabella, Paris, Jumbo, Líder), reponedores, organizar ropa, bodega, cajeros, operarios.\n"
-                "• **Filtro estricto:** Chillán / Chillán Viejo o remoto para Chile, sin exigir profesión ni título técnico superior.\n\n"
+                "• **Filtro estricto:** Chillán / Chillán Viejo / Temuco o remoto para Chile, sin exigir profesión ni título técnico superior.\n\n"
                 "🚫 **Mensajes Privados (MD):** Desactivados estrictamente. Todas las alertas van directo a sus canales.\n"
                 f"💡 Al iniciar recupera los últimos {self.bot.settings.recovery_days} días; "
                 f"el barrido global se ejecuta cada {self.bot.settings.poll_interval_minutes} minutos "
@@ -268,9 +268,9 @@ class EmpleoCog(
             inline=True,
         )
         embed.add_field(name="💻 Canal Informática", value=f"<#{inf_id}>", inline=True)
-        embed.add_field(name="🛍️ Canal Chillán Retail/Otros", value=f"<#{chi_id}>", inline=True)
+        embed.add_field(name="🛍️ Canal Otros empleos", value=f"<#{chi_id}>", inline=True)
         embed.add_field(
-            name="📍 Zonas de aviso", value="Chillán, Chillán Viejo y remoto desde Chile", inline=True
+            name="📍 Zonas de aviso", value="Chillán, Chillán Viejo, Temuco y remoto desde Chile", inline=True
         )
         embed.add_field(
             name="📈 Ofertas en BD", value=f"Total: {stats.get('total', 0)}", inline=True

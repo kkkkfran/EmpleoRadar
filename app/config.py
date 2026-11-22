@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     )
     discord_channel_chillan_id: int = Field(
         default=1561217778722283613,
-        description="ID del canal de Discord para otros empleos en Chillán (retail, operarios, tiendas)",
+        description="ID del canal para otros empleos en Chillán y Temuco (retail, operarios, tiendas)",
     )
 
     bne_postulante_id: str | None = Field(
@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     source_timeout_seconds: int = Field(default=180, ge=10, le=600)
     recovery_days: int = Field(default=4, ge=1, le=30)
     publication_start_date: date = Field(
-        default=date(2026, 11, 16), description="Fecha inicial inclusiva para publicar ofertas"
+        default=date(2026, 11, 18), description="Fecha inicial inclusiva para publicar ofertas"
     )
     port: int = Field(default=8080, ge=1, le=65535)
 
@@ -126,13 +126,14 @@ class Settings(BaseSettings):
     @field_validator("publication_start_date", mode="before")
     @classmethod
     def validate_publication_start_date(cls, value: Any) -> date:
-        earliest = date(2026, 11, 16)
+        earliest = date(2026, 11, 18)
         if value is None or (isinstance(value, str) and not value.strip()):
             return earliest
         configured = date.fromisoformat(value) if isinstance(value, str) else value
-        if not isinstance(configured, date) or configured < earliest:
-            raise ValueError("PUBLICATION_START_DATE no puede ser anterior a 2026-11-16")
-        return configured
+        if not isinstance(configured, date):
+            raise ValueError("PUBLICATION_START_DATE debe ser una fecha válida")
+        # Older deployment variables must not let alerts escape the requested date floor.
+        return max(configured, earliest)
 
     @field_validator("discord_owner_id", mode="before")
     @classmethod
