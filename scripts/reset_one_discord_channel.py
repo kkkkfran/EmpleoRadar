@@ -12,6 +12,7 @@ import discord
 from sqlalchemy import update
 
 from app.config import get_settings
+from app.database.migrations.runner import run_migrations
 from app.database.models import Job
 from app.database.repository import Database
 
@@ -104,6 +105,9 @@ async def main(args: argparse.Namespace) -> None:
                 f"Refusing: message count changed; expected {args.expected_message_count}, "
                 f"found {len(messages)}. Review a fresh preview."
             )
+
+        await db.create_tables()
+        await run_migrations(db)
 
         archive_dir = Path(args.archive_dir) if args.archive_dir else settings.backup_path
         archive_dir.mkdir(parents=True, exist_ok=True)
