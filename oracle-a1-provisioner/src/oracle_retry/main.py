@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from oci.exceptions import ServiceError
+from oci.exceptions import InvalidConfig, ServiceError
 
 from .config import ConfigurationError, Settings
 from .instance_manager import InstanceManager
@@ -36,6 +36,11 @@ def main() -> int:
     except ValidationError as exc:
         log.error("Validación detenida: %s", exc)
         if settings: notify(settings, "Intervención manual requerida", str(exc))
+    except InvalidConfig as exc:
+        # OCI exposes only field names and statuses here; never log credential values.
+        log.error("Configuración OCI inválida (campos/estado): %s", exc.errors)
+        if settings:
+            notify(settings, "Error de configuración OCI", f"Campos/estado: {exc.errors}")
     except ServiceError as exc:
         category = "autenticación/permisos" if exc.status in (401, 403) else "error OCI"
         log.error("Error %s de OCI (HTTP %s, código %s)", category, exc.status, exc.code)
