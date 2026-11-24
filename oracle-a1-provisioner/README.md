@@ -52,6 +52,18 @@ Configura estas variables en el servicio Railway (no en el repositorio):
 
 Los OCID, fingerprint, AD exacto, namespace y clave pública se obtienen manualmente de OCI/tu equipo; el proyecto no los inventa. `VCN` no se usa como variable separada: OCI valida la subnet seleccionada.
 
+## Ejecutar sin consumir recursos de Railway: GitHub Actions
+
+El repositorio EmpleoRadar es público, por lo que este workflow puede usar runners alojados por GitHub sin consumir recursos de Railway. Los horarios programados pueden retrasarse o perderse durante periodos de alta carga; no son un reloj de precisión. El workflow corre desde la rama predeterminada, cada 15 minutos aproximadamente, y también se puede lanzar manualmente.
+
+1. Abre el repositorio `kkkkfran/EmpleoRadar` en GitHub y entra a **Settings → Secrets and variables → Actions → Secrets**.
+2. Crea un secret por cada valor obligatorio: `OCI_USER_OCID`, `OCI_TENANCY_OCID`, `OCI_FINGERPRINT`, `OCI_PRIVATE_KEY`, `OCI_REGION`, `OCI_COMPARTMENT_OCID`, `OCI_AVAILABILITY_DOMAIN`, `OCI_SUBNET_OCID`, `OCI_BOOT_VOLUME_OCID`, `OCI_SSH_PUBLIC_KEY`, `OCI_STATE_BUCKET` y `OCI_OBJECT_STORAGE_NAMESPACE`.
+3. Guarda `OCI_PRIVATE_KEY` en Base64. El workflow la decodifica; genera el valor en Windows con el comando de PowerShell de arriba y pégalo directamente en GitHub. No lo compartas en chats ni lo guardes en un archivo del repositorio.
+4. Opcionales: crea `OCI_PRIVATE_KEY_PASSPHRASE` y `DISCORD_WEBHOOK_URL` como secrets. En **Variables**, puedes dejar `DRY_RUN` sin crear (por defecto es `true`) o establecerlo explícitamente en `true`. `NOTIFY_CAPACITY` es opcional y por defecto `false`.
+5. Abre **Actions → Oracle A1 provisioner → Run workflow** para probarlo manualmente en `DRY_RUN=true`. Revisa el resultado. Para habilitar solicitudes reales, crea la variable `DRY_RUN=false` en **Settings → Secrets and variables → Actions → Variables**.
+
+El horario está escalonado en los minutos 7, 22, 37 y 52 de cada hora para reducir esperas. Los cron de GitHub se basan en UTC y GitHub advierte que pueden retrasarse o perder ejecuciones bajo alta carga. GitHub documenta que los runners estándar son gratuitos para repositorios públicos y que los secretos se agregan desde Settings → Secrets and variables → Actions ([uso y cobros](https://docs.github.com/en/actions/concepts/billing-and-usage), [secretos](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets), [horarios](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)).
+
 ## Despliegue en Railway dentro de EmpleoRadar
 
 Este proyecto vive en `/oracle-a1-provisioner` dentro del repositorio `kkkkfran/EmpleoRadar`. Usa un servicio Cron separado dentro del proyecto Railway existente; no cambies el servicio persistente del bot.
@@ -78,7 +90,7 @@ El arranque desde volumen existente y la elegibilidad Always Free dependen de co
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 $env:PYTHONPATH = "src"
 pytest
 python -m oracle_retry.main

@@ -3,7 +3,7 @@
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "Dockerfile",
-    "watchPatterns": ["/**", "!/oracle-a1-provisioner/**"]
+    "watchPatterns": ["/**", "!/oracle-a1-provisioner/**", "!/.github/workflows/oracle-a1-provisioner.yml"]
   },
   "deploy": {
     "startCommand": "python -m app.main",

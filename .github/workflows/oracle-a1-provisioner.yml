@@ -1,0 +1,59 @@
+name: Oracle A1 provisioner
+
+on:
+  schedule:
+    # Offset from the hour to reduce scheduler congestion; still runs every 15 minutes.
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oracle-a1-provisioner
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: oracle-a1-provisioner
+    env:
+      DRY_RUN: ${{ vars.DRY_RUN || 'true' }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_PRIVATE_KEY_BASE64: "true"
+      OCI_PRIVATE_KEY_PASSPHRASE: ${{ secrets.OCI_PRIVATE_KEY_PASSPHRASE }}
+      OCI_REGION: ${{ secrets.OCI_REGION }}
+      OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+      OCI_AVAILABILITY_DOMAIN: ${{ secrets.OCI_AVAILABILITY_DOMAIN }}
+      OCI_SUBNET_OCID: ${{ secrets.OCI_SUBNET_OCID }}
+      OCI_BOOT_VOLUME_OCID: ${{ secrets.OCI_BOOT_VOLUME_OCID }}
+      OCI_SSH_PUBLIC_KEY: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
+      OCI_STATE_BUCKET: ${{ secrets.OCI_STATE_BUCKET }}
+      OCI_OBJECT_STORAGE_NAMESPACE: ${{ secrets.OCI_OBJECT_STORAGE_NAMESPACE }}
+      INSTANCE_NAME: ${{ vars.INSTANCE_NAME || 'servidor-bots' }}
+      INSTANCE_OCPUS: "1"
+      INSTANCE_MEMORY_GBS: "6"
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      NOTIFY_CAPACITY: ${{ vars.NOTIFY_CAPACITY || 'false' }}
+    steps:
+      - name: Check out default branch
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: oracle-a1-provisioner/requirements.txt
+
+      - name: Install OCI SDK
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Run provisioner
+        run: python -m oracle_retry.main
