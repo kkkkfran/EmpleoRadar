@@ -2,7 +2,8 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "DOCKERFILE",
-    "dockerfilePath": "Dockerfile"
+    "dockerfilePath": "Dockerfile",
+    "watchPatterns": ["/**", "!/oracle-a1-provisioner/**"]
   },
   "deploy": {
     "startCommand": "python -m app.main",

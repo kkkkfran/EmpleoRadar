@@ -1,0 +1,10 @@
+.env
+*.pem
+*.key
+__pycache__/
+.pytest_cache/
+.venv/
+# Prevent duplicated local EmpleoRadar tests from entering this subproject.
+tests/fixtures/
+tests/integration/
+tests/unit/
